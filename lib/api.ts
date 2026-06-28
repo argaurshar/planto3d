@@ -1,9 +1,37 @@
-import type {
-  DesignBrief,
-  GenerateImageResponse,
-  RoomPromptResponse,
-  RoomType,
-} from "./types";
+import type { DesignBrief, GenerateImageResponse, RoomPromptResponse, RoomType } from "./types";
+import { overviewPrompt } from "./prompts";
+import {
+  generateImageBrowser,
+  writeRoomPromptBrowser,
+  roomRenderPrompt,
+} from "./kieBrowser";
+
+// In the static (GitHub Pages) build there is no server, so generation runs in
+// the browser with a user-supplied key. The server build keeps the secure
+// route handlers. NEXT_PUBLIC_STATIC is set to "true" only for the Pages build.
+export const IS_STATIC = process.env.NEXT_PUBLIC_STATIC === "true";
+
+const API_KEY_STORAGE = "planto3d_kie_key";
+
+export function getStoredKey(): string {
+  if (typeof window === "undefined") return "";
+  return window.localStorage.getItem(API_KEY_STORAGE) || "";
+}
+
+export function setStoredKey(key: string): void {
+  if (typeof window === "undefined") return;
+  const trimmed = key.trim();
+  if (trimmed) window.localStorage.setItem(API_KEY_STORAGE, trimmed);
+  else window.localStorage.removeItem(API_KEY_STORAGE);
+}
+
+function requireKey(): string {
+  const key = getStoredKey();
+  if (!key) {
+    throw new Error("Add your kie.ai API key at the top of the page to generate.");
+  }
+  return key;
+}
 
 async function postJson<T>(url: string, body: Record<string, unknown>): Promise<T> {
   const res = await fetch(url, {
@@ -29,6 +57,9 @@ export async function requestOverview(
   planDataUrl: string,
   brief: DesignBrief,
 ): Promise<string> {
+  if (IS_STATIC) {
+    return generateImageBrowser(overviewPrompt(brief), [planDataUrl], requireKey(), "plan.png");
+  }
   const data = await postJson<GenerateImageResponse>("/api/overview", {
     plan: planDataUrl,
     brief,
@@ -42,6 +73,14 @@ export async function requestRoomPrompt(
   brief: DesignBrief,
   roomType: RoomType,
 ): Promise<string> {
+  if (IS_STATIC) {
+    return writeRoomPromptBrowser({
+      cropDataUrl: roomDataUrl,
+      brief,
+      roomType,
+      apiKey: requireKey(),
+    });
+  }
   const data = await postJson<RoomPromptResponse>("/api/room", {
     action: "write",
     room: roomDataUrl,
@@ -56,12 +95,22 @@ export async function requestRoomRender(
   roomDataUrl: string,
   prompt: string,
   variation: number,
+  brief: DesignBrief,
 ): Promise<string> {
+  if (IS_STATIC) {
+    return generateImageBrowser(
+      roomRenderPrompt(prompt, variation, brief),
+      [roomDataUrl],
+      requireKey(),
+      "room.png",
+    );
+  }
   const data = await postJson<GenerateImageResponse>("/api/room", {
     action: "render",
     room: roomDataUrl,
     prompt,
     variation,
+    brief,
   });
   return data.image;
 }

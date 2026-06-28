@@ -74,12 +74,43 @@ lib/
   types.ts            # shared types
 ```
 
+## Deploy
+
+Two supported targets:
+
+### Vercel (recommended — keeps your key server-side)
+
+The default build runs the API routes, so your `KIE_API_KEY` stays on the
+server. Import the repo at [vercel.com](https://vercel.com), add a `KIE_API_KEY`
+environment variable, and deploy. (Free-tier function timeout is 60s, which a
+slow generation can exceed; bump to Pro or another Node host if you hit it.)
+
+### GitHub Pages (static — bring your own key in the browser)
+
+Pages can only serve static files, so there is **no server** and **no place to
+hide a key**. The repo ships a static build mode for this:
+
+- `.github/workflows/pages.yml` builds a fully static export
+  (`STATIC_EXPORT=true`) and deploys it to Pages on every push to `main`.
+- In the static build there are no API routes — generation runs **in your
+  browser**, so the app shows an **API-key field**; the key you paste is stored
+  only in your browser's `localStorage` and is **never committed**.
+
+To enable it: in the repo, **Settings → Pages → Build and deployment →
+Source: GitHub Actions**. The site publishes at
+`https://<owner>.github.io/planto3d/`.
+
+> ⚠️ Caveat: browser → kie.ai calls only work if kie.ai sends permissive **CORS**
+> headers. If they don't, the front end still loads but generation fails with a
+> network error — use the Vercel/server deploy in that case.
+
 ## Notes
 
 - Live generation requires a kie.ai key with credit and `nano-banana-2` access.
   Without it the UI still runs, but generation calls return an error shown in
   the UI.
 - Output resolution defaults to `1K`; override with `KIE_IMAGE_RESOLUTION`
-  (`1K` | `2K` | `4K`) or the model with `KIE_IMAGE_MODEL` in `.env.local`.
+  (`1K` | `2K` | `4K`) or the model with `KIE_IMAGE_MODEL` (server build) /
+  `NEXT_PUBLIC_KIE_*` (static build).
 - kie.ai-hosted uploads and results are temporary (deleted after a few days);
   the app treats results as ephemeral image URLs.

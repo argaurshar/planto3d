@@ -227,6 +227,7 @@ export default function PlanToThreeD() {
         state.cropDataUrl,
         state.roomPrompt,
         state.variation,
+        state.brief,
       );
       if (isStale(id)) return;
       dispatch({ type: "ROOM_DONE", dataUrl: image });
@@ -245,6 +246,7 @@ export default function PlanToThreeD() {
         state.cropDataUrl,
         state.roomPrompt,
         state.variation,
+        state.brief,
       );
       if (isStale(id)) return;
       dispatch({ type: "ROOM_DONE", dataUrl: image });

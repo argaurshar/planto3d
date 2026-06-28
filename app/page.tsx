@@ -1,4 +1,5 @@
 import PlanToThreeD from "./PlanToThreeD";
+import ApiKeyBar from "./components/ApiKeyBar";
 
 export default function Home() {
   return (
@@ -13,6 +14,7 @@ export default function Home() {
           auto-written and fully editable, regenerate until you like it.
         </p>
       </header>
+      <ApiKeyBar />
       <PlanToThreeD />
     </main>
   );

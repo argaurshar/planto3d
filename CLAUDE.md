@@ -157,6 +157,19 @@ Without it the UI runs but generation calls return an error surfaced in the UI.
 - Keep the kie.ai key server-side: never import `lib/kie.ts` into a client
   component (`"use client"` files).
 
+## Build modes (server vs static)
+
+- **Server (default):** API routes hold `KIE_API_KEY`; deploy to Vercel/Node.
+- **Static (GitHub Pages):** `STATIC_EXPORT=true` + `NEXT_PUBLIC_STATIC=true`
+  builds a client-only export (`next.config.js` switches on these). There are no
+  API routes, so generation runs in the browser via `lib/kieBrowser.ts`, using a
+  user-supplied key entered in `components/ApiKeyBar.tsx` (localStorage, never
+  committed). `lib/api.ts` branches on `IS_STATIC`. The Pages workflow
+  (`.github/workflows/pages.yml`) strips `app/api` before the export build (POST
+  route handlers can't be statically exported) and deploys to Pages.
+- Browser → kie.ai calls in the static build depend on kie.ai CORS; if blocked,
+  use the server build. Keep both paths working when changing the kie.ai layer.
+
 ## Git workflow
 
 - Develop on feature branches; do not push directly to the default branch.
