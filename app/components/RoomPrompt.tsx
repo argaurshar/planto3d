@@ -37,27 +37,25 @@ export default function RoomPrompt({
   const writing = stage === "writing";
 
   return (
-    <div className="space-y-4">
+    <div className="card space-y-4 p-4">
       <div className="grid gap-6 md:grid-cols-[1fr_2fr]">
         <figure className="space-y-2">
-          <figcaption className="text-xs uppercase tracking-wide text-neutral-500">
-            Selected room
-          </figcaption>
+          <figcaption className="eyebrow">Selected room</figcaption>
           {cropDataUrl && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={cropDataUrl}
-              alt="Selected room crop from the plan"
-              className="w-full rounded-lg border border-neutral-800 bg-white"
-            />
+            <div className="media-frame bg-white">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={cropDataUrl}
+                alt="Selected room crop from the plan"
+                className="block w-full"
+              />
+            </div>
           )}
         </figure>
 
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs uppercase tracking-wide text-neutral-500">
-              Interior prompt (editable)
-            </span>
+            <span className="eyebrow">Interior prompt (editable)</span>
             <button
               type="button"
               onClick={onRewrite}
@@ -68,7 +66,7 @@ export default function RoomPrompt({
             </button>
           </div>
           <textarea
-            className="h-56 w-full resize-y rounded-lg border border-neutral-700 bg-neutral-900 p-3 text-sm leading-relaxed text-neutral-100 outline-none focus:border-emerald-500 disabled:opacity-60"
+            className="h-56 w-full resize-y rounded-lg border border-white/10 bg-neutral-950/60 p-3 text-sm leading-relaxed text-neutral-100 outline-none focus:border-emerald-500/70 focus:ring-2 focus:ring-emerald-500/20 disabled:opacity-60"
             value={prompt}
             disabled={writing}
             placeholder={
@@ -107,16 +105,11 @@ export default function RoomPrompt({
           type="button"
           onClick={onRender}
           disabled={busy || !prompt.trim()}
-          className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-neutral-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+          className="btn-primary"
         >
           {stage === "rendering" ? "Rendering…" : "Render 3D interior"}
         </button>
-        <button
-          type="button"
-          onClick={onBack}
-          disabled={busy}
-          className="text-sm text-neutral-500 underline-offset-2 hover:text-neutral-300 hover:underline disabled:opacity-40"
-        >
+        <button type="button" onClick={onBack} disabled={busy} className="btn-ghost">
           ← Pick a different room
         </button>
       </div>

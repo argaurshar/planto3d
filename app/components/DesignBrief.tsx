@@ -9,8 +9,7 @@ interface Props {
   onChange: (patch: Partial<DesignBrief>) => void;
 }
 
-const inputCls =
-  "w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 outline-none focus:border-emerald-500 disabled:opacity-50";
+const inputCls = "input";
 
 /** The global "design brief": style, lighting, and optional plan metadata. */
 export default function DesignBrief({ brief, disabled, onChange }: Props) {
@@ -20,10 +19,8 @@ export default function DesignBrief({ brief, disabled, onChange }: Props) {
   };
 
   return (
-    <div className="space-y-3 rounded-xl border border-neutral-800 bg-neutral-900/40 p-4">
-      <h2 className="text-xs font-medium uppercase tracking-wide text-neutral-400">
-        Design brief
-      </h2>
+    <div className="panel space-y-3 p-4">
+      <h2 className="eyebrow">Design brief</h2>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="space-y-1">

@@ -1,5 +1,7 @@
 "use client";
 
+import DownloadButton from "./DownloadButton";
+
 interface Props {
   cropDataUrl: string | null;
   versions: string[];
@@ -30,38 +32,42 @@ export default function RoomResult({
   const hasMultiple = versions.length > 1;
 
   return (
-    <div className="space-y-5">
+    <div className="card space-y-5 p-4">
       <div className="grid gap-6 md:grid-cols-[1fr_2fr]">
         <figure className="space-y-2">
-          <figcaption className="text-xs uppercase tracking-wide text-neutral-500">
-            Selected room
-          </figcaption>
+          <figcaption className="eyebrow">Selected room</figcaption>
           {cropDataUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={cropDataUrl}
-              alt="Selected room crop from the plan"
-              className="w-full rounded-lg border border-neutral-800 bg-white"
-            />
+            <div className="media-frame bg-white">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={cropDataUrl} alt="Selected room crop from the plan" className="block w-full" />
+            </div>
           ) : null}
         </figure>
 
         <figure className="space-y-2">
-          <figcaption className="flex items-center justify-between text-xs uppercase tracking-wide text-neutral-500">
-            <span>Photorealistic interior</span>
-            {versions.length > 0 && (
-              <span className="normal-case tracking-normal text-neutral-400">
-                version {currentIndex + 1} / {versions.length}
-              </span>
-            )}
+          <figcaption className="flex items-center justify-between">
+            <span className="eyebrow">Photorealistic interior</span>
+            <div className="flex items-center gap-3">
+              {versions.length > 0 && (
+                <span className="text-xs text-neutral-400">
+                  version {currentIndex + 1} / {versions.length}
+                </span>
+              )}
+              {current && (
+                <DownloadButton
+                  url={current}
+                  filename={`planto3d-room-v${currentIndex + 1}.png`}
+                />
+              )}
+            </div>
           </figcaption>
-          <div className="flex min-h-[16rem] items-center justify-center rounded-lg border border-neutral-800 bg-neutral-900/50">
+          <div className="media-frame flex min-h-[16rem] items-center justify-center">
             {current ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={current}
                 alt="Generated photorealistic interior render of the room"
-                className="w-full rounded-lg"
+                className="block w-full"
               />
             ) : (
               <span className="px-4 py-8 text-center text-sm text-neutral-500">
@@ -75,21 +81,11 @@ export default function RoomResult({
       {error && <p className="text-sm text-red-400">{error}</p>}
 
       <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={onRegenerate}
-          disabled={loading}
-          className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-neutral-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
-        >
+        <button type="button" onClick={onRegenerate} disabled={loading} className="btn-primary">
           {loading ? "Regenerating…" : "Regenerate"}
         </button>
 
-        <button
-          type="button"
-          onClick={onEditPrompt}
-          disabled={loading}
-          className="rounded-lg border border-neutral-700 px-4 py-2 text-sm transition hover:bg-neutral-800 disabled:opacity-40"
-        >
+        <button type="button" onClick={onEditPrompt} disabled={loading} className="btn-outline">
           Edit prompt
         </button>
 
@@ -99,7 +95,7 @@ export default function RoomResult({
               type="button"
               onClick={onPrev}
               disabled={currentIndex === 0}
-              className="rounded-lg border border-neutral-700 px-3 py-2 text-sm transition hover:bg-neutral-800 disabled:opacity-40"
+              className="btn-outline px-3"
               aria-label="Previous version"
             >
               ←
@@ -108,7 +104,7 @@ export default function RoomResult({
               type="button"
               onClick={onNext}
               disabled={currentIndex === versions.length - 1}
-              className="rounded-lg border border-neutral-700 px-3 py-2 text-sm transition hover:bg-neutral-800 disabled:opacity-40"
+              className="btn-outline px-3"
               aria-label="Next version"
             >
               →
@@ -116,12 +112,7 @@ export default function RoomResult({
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={onPickAnother}
-          disabled={loading}
-          className="ml-auto rounded-lg border border-neutral-700 px-4 py-2 text-sm transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
-        >
+        <button type="button" onClick={onPickAnother} disabled={loading} className="btn-outline ml-auto">
           Pick another room
         </button>
       </div>
