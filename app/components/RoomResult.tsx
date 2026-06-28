@@ -7,6 +7,7 @@ interface Props {
   loading: boolean;
   error: string | null;
   onRegenerate: () => void;
+  onEditPrompt: () => void;
   onPrev: () => void;
   onNext: () => void;
   onPickAnother: () => void;
@@ -20,6 +21,7 @@ export default function RoomResult({
   loading,
   error,
   onRegenerate,
+  onEditPrompt,
   onPrev,
   onNext,
   onPickAnother,
@@ -46,7 +48,7 @@ export default function RoomResult({
 
         <figure className="space-y-2">
           <figcaption className="flex items-center justify-between text-xs uppercase tracking-wide text-neutral-500">
-            <span>3D axonometric room</span>
+            <span>Photorealistic interior</span>
             {versions.length > 0 && (
               <span className="normal-case tracking-normal text-neutral-400">
                 version {currentIndex + 1} / {versions.length}
@@ -58,7 +60,7 @@ export default function RoomResult({
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={current}
-                alt="Generated 3D axonometric view of the room"
+                alt="Generated photorealistic interior render of the room"
                 className="w-full rounded-lg"
               />
             ) : (
@@ -80,6 +82,15 @@ export default function RoomResult({
           className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-neutral-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {loading ? "Regenerating…" : "Regenerate"}
+        </button>
+
+        <button
+          type="button"
+          onClick={onEditPrompt}
+          disabled={loading}
+          className="rounded-lg border border-neutral-700 px-4 py-2 text-sm transition hover:bg-neutral-800 disabled:opacity-40"
+        >
+          Edit prompt
         </button>
 
         {hasMultiple && (

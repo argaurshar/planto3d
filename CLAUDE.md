@@ -20,33 +20,47 @@ All image generation is done by **Nano Banana 2** — the `nano-banana-2` model 
 ## Interaction flow
 
 This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
-`useReducer` state machine with steps `upload → overview → select → room`):
+`useReducer` state machine with steps
+`upload → overview → select → roomPrompt → room`):
 
 1. **Upload** a 2D plan image (`components/PlanUploader.tsx`).
-2. **Generate overview** — POST the plan to `/api/overview`; Nano Banana 2
-   returns an axonometric overview of the whole plan (`components/OverviewView.tsx`).
-3. **Proceed** → enter room-selection mode.
-4. **Draw a box** around a room on the plan (`components/RoomSelector.tsx`); the
-   selection is captured in **natural image pixels** and cropped client-side
-   (`lib/crop.ts`).
-5. **Build the room in 3D** — POST the crop to `/api/room`; the model returns a
-   3D axonometric render (`components/RoomResult.tsx`).
-6. **Regenerate** — re-POST the same crop with an incremented `variation`
-   counter; every version is kept in `roomVersions[]` and is navigable.
+2. **Design brief** — pick a style preset, lighting, and optional plan metadata
+   (`components/DesignBrief.tsx`); threaded into every prompt.
+3. **Generate overview** — POST `{ plan, brief }` to `/api/overview`; Nano
+   Banana 2 returns an **axonometric** top-view of the whole plan
+   (`components/OverviewView.tsx`). **Approve** to continue.
+4. **Draw a box** around a room (`components/RoomSelector.tsx`) and pick a room
+   type; the selection is captured in **natural image pixels** and cropped
+   client-side (`lib/crop.ts`).
+5. **Two-stage room render:**
+   - **3a — prompt writer** — `/api/room` `action:"write"` calls a kie.ai vision
+     LLM (`lib/kieChat.ts`) to auto-write a **photorealistic interior** prompt,
+     shown in an **editable** box (`components/RoomPrompt.tsx`).
+   - **3b — render** — `action:"render"` sends the (possibly edited) prompt +
+     the crop (+ the approved overview as a style reference) to Nano Banana 2 →
+     a photorealistic eye-level interior (`components/RoomResult.tsx`).
+6. **Regenerate** (vary the render) / **Edit prompt** / **Rewrite with AI**;
+   every version is kept in `roomVersions[]` and is navigable.
 7. **Pick another room** and repeat.
 
-Key principles: user-confirmed incremental generation, draw-a-box selection,
-and regeneration as a first-class action that preserves the selected room.
+Key principles: a global **design brief**, user-confirmed incremental
+generation, draw-a-box selection, a **transparent editable prompt** between
+selection and render, and regeneration as a first-class action that preserves
+the selected room. The overview is **axonometric**; rooms are **photorealistic
+interiors**.
 
 ## Tech stack
 
 - **Next.js** (App Router) + **React 19** + **TypeScript** (strict).
 - **Tailwind CSS** for styling.
-- **kie.ai** job API, server-side only, model `nano-banana-2`.
+- **kie.ai**, server-side only. Two models:
+  - **`nano-banana-2`** image model via the **job API** (`lib/kie.ts`).
+  - a **vision chat model** (`gemini-2.5-flash`) via the **OpenAI-compatible
+    chat endpoint** for the prompt-writer (`lib/kieChat.ts`).
 - The kie.ai API key (`KIE_API_KEY`) is read **only** in server code
-  (`lib/kie.ts`, which imports `server-only`); it is never bundled into the
-  client. Override the model with `KIE_IMAGE_MODEL` and resolution with
-  `KIE_IMAGE_RESOLUTION` (`1K`|`2K`|`4K`, default `1K`).
+  (`lib/kie.ts` / `lib/kieChat.ts`, which import `server-only`); it is never
+  bundled into the client. Overrides: `KIE_IMAGE_MODEL`, `KIE_IMAGE_RESOLUTION`
+  (`1K`|`2K`|`4K`, default `1K`), `KIE_CHAT_MODEL` (default `gemini-2.5-flash`).
 
 ### kie.ai job flow (in `lib/kie.ts`)
 
@@ -62,6 +76,17 @@ so each generation does three steps server-side:
 The routes return `{ image, mimeType }` where **`image` is a remote URL** the UI
 drops straight into `<img src>`.
 
+### Two-stage room pipeline (`/api/room`)
+
+`/api/room` takes an `action`:
+- `"write"` → `lib/kieChat.ts` `writeRoomPrompt` (vision LLM) returns
+  `{ prompt }` (falls back to a templated prompt if the LLM call fails, so the
+  user can always render).
+- `"render"` → `generateImage(roomRenderPrompt(prompt, variation), [crop, ref?])`
+  returns `{ image }`. The approved overview URL is passed as an extra reference
+  for style consistency (`nano-banana-2` accepts multiple input images).
+- `"auto"` → write then render in one call.
+
 ## Project structure
 
 ```
@@ -72,19 +97,23 @@ app/
   PlanToThreeD.tsx      # client state machine (the whole flow)
   components/
     PlanUploader.tsx    # file → data URL
-    OverviewView.tsx    # plan + overview + Generate/Proceed
-    RoomSelector.tsx    # canvas-free box drawing over the plan
-    RoomResult.tsx      # room render + Regenerate + version history
+    DesignBrief.tsx     # style preset + lighting + plan metadata
+    OverviewView.tsx    # brief + plan + overview + Generate/Approve
+    RoomSelector.tsx    # box drawing over the plan + room-type selector
+    RoomPrompt.tsx      # editable auto-written interior prompt + Render
+    RoomResult.tsx      # interior render + Regenerate/Edit prompt + history
   api/
-    overview/route.ts   # POST { plan }            → { image, mimeType }
-    room/route.ts        # POST { room, variation } → { image, mimeType }
+    overview/route.ts   # POST { plan, brief }                  → { image, mimeType }
+    room/route.ts        # POST { action, room, brief, prompt… } → { image|prompt }
 lib/
-  kie.ts                # server-only kie.ai client (upload + createTask + poll)
-  prompts.ts            # axonometric overview + per-room prompt templates
+  kie.ts                # server-only kie.ai image client (upload + createTask + poll)
+  kieChat.ts            # server-only kie.ai vision-LLM prompt writer (Stage 3a)
+  prompts.ts            # overview + prompt-writer system + room render templates
+  styles.ts             # interior-design style presets + brief resolution
   crop.ts               # rect math + crop a region of the plan → PNG data URL
-  api.ts                # client fetch helpers (requestOverview/requestRoom)
+  api.ts                # client fetch helpers (overview/roomPrompt/roomRender)
   image.ts              # data URL validation helper (dataUrlToInline)
-  types.ts              # shared types
+  types.ts              # shared types (DesignBrief, RoomType, responses)
 ```
 
 ### Where things live

@@ -39,6 +39,16 @@ function getApiKey(): string {
   return key;
 }
 
+/** Public accessor for other server-only kie.ai modules (e.g. lib/kieChat). */
+export function requireApiKey(): string {
+  return getApiKey();
+}
+
+/** kie.ai status code → clean message, shared with other kie.ai modules. */
+export function mapKieStatus(code: number, fallback: string): string {
+  return messageForCode(code, fallback);
+}
+
 function authHeaders(key: string): Record<string, string> {
   return {
     Authorization: `Bearer ${key}`,
@@ -225,17 +235,28 @@ function safeParse(json?: string): { resultUrls?: string[] } | null {
 }
 
 /**
- * Full pipeline: upload each input image, create a task, and wait for the
- * result. Returns the URL of the generated image.
+ * Resolve an input image reference to a hosted URL kie.ai can fetch.
+ * Already-hosted `http(s)` URLs (e.g. a previously generated overview) are
+ * passed through; base64 data URLs are uploaded first.
+ */
+async function toHostedUrl(input: string, fileName: string): Promise<string> {
+  if (/^https?:\/\//i.test(input)) return input;
+  return uploadBase64(input, fileName);
+}
+
+/**
+ * Full pipeline: resolve each input image to a hosted URL, create a task, and
+ * wait for the result. Inputs may be base64 data URLs (uploaded) or existing
+ * `http(s)` URLs (passed through). Returns the URL of the generated image.
  */
 export async function generateImage(
   prompt: string,
-  inputDataUrls: string[],
+  inputs: string[],
   fileName = "plan.png",
 ): Promise<{ imageUrl: string }> {
   const imageUrls = await Promise.all(
-    inputDataUrls.map((dataUrl, i) =>
-      uploadBase64(dataUrl, inputDataUrls.length > 1 ? `${i}-${fileName}` : fileName),
+    inputs.map((input, i) =>
+      toHostedUrl(input, inputs.length > 1 ? `${i}-${fileName}` : fileName),
     ),
   );
   const taskId = await createTask(prompt, imageUrls);
