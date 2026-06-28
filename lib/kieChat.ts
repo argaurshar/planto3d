@@ -2,6 +2,7 @@ import "server-only";
 
 import { KieError, requireApiKey, mapKieStatus, uploadBase64 } from "./kie";
 import { promptWriterSystem } from "./prompts";
+import { SPATIAL_EXTRACTION_PROMPT, parseSpatialBoxes, describeLayout } from "./spatial";
 import type { DesignBrief, RoomType } from "./types";
 
 /**
@@ -23,32 +24,16 @@ interface ChatResponse {
   choices?: { message?: { content?: string } }[];
 }
 
-/**
- * Write a photorealistic interior prompt for the given room crop.
- * `cropDataUrl` is a base64 data URL (uploaded to get a hosted URL first).
- */
-export async function writeRoomPrompt(args: {
-  cropDataUrl: string;
-  brief: DesignBrief;
-  roomType: RoomType;
-  /** Optional hosted overview URL for whole-home style consistency. */
-  overviewUrl?: string;
-}): Promise<string> {
-  const key = requireApiKey();
-  const imageUrl = await uploadBase64(args.cropDataUrl, "room.png");
-  const hasOverview = Boolean(args.overviewUrl);
-  const system = promptWriterSystem(args.brief, args.roomType, hasOverview);
+type ChatContent =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
 
-  const userContent: Array<
-    { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }
-  > = [
-    { type: "text", text: "Write the photorealistic interior prompt for this room." },
-    { type: "image_url", image_url: { url: imageUrl } },
-  ];
-  if (args.overviewUrl) {
-    userContent.push({ type: "image_url", image_url: { url: args.overviewUrl } });
-  }
-
+/** POST a single (system + user) turn to the kie.ai chat endpoint, return text. */
+async function chatComplete(
+  system: string,
+  userContent: ChatContent[],
+  key: string,
+): Promise<string> {
   let res: Response;
   try {
     res = await fetch(chatUrl(), {
@@ -80,7 +65,61 @@ export async function writeRoomPrompt(args: {
   }
 
   const json = (await res.json().catch(() => null)) as ChatResponse | null;
-  const content = json?.choices?.[0]?.message?.content?.trim();
+  return json?.choices?.[0]?.message?.content?.trim() ?? "";
+}
+
+/**
+ * Stage 3a spatial grounding: run an object-detection pass on the room crop and
+ * return a natural-language layout string, or "" if detection fails/empties.
+ * Best-effort — never throws (the prompt writer degrades to today's behavior).
+ */
+async function detectLayout(imageUrl: string, key: string): Promise<string> {
+  try {
+    const content = await chatComplete(
+      SPATIAL_EXTRACTION_PROMPT,
+      [
+        { type: "text", text: "Detect the objects in this room." },
+        { type: "image_url", image_url: { url: imageUrl } },
+      ],
+      key,
+    );
+    return describeLayout(parseSpatialBoxes(content));
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Write a photorealistic interior prompt for the given room crop.
+ * `cropDataUrl` is a base64 data URL (uploaded to get a hosted URL first).
+ */
+export async function writeRoomPrompt(args: {
+  cropDataUrl: string;
+  brief: DesignBrief;
+  roomType: RoomType;
+  /** Optional hosted overview URL for whole-home style consistency. */
+  overviewUrl?: string;
+}): Promise<string> {
+  const key = requireApiKey();
+  const imageUrl = await uploadBase64(args.cropDataUrl, "room.png");
+
+  // Stage 3a.0: ground the prompt in a detected layout of the crop.
+  const layout = await detectLayout(imageUrl, key);
+  const hasOverview = Boolean(args.overviewUrl);
+  const system = promptWriterSystem(args.brief, args.roomType, hasOverview, Boolean(layout));
+
+  const userContent: ChatContent[] = [
+    { type: "text", text: "Write the photorealistic interior prompt for this room." },
+  ];
+  if (layout) {
+    userContent.push({ type: "text", text: `DETECTED SPATIAL LAYOUT:\n${layout}` });
+  }
+  userContent.push({ type: "image_url", image_url: { url: imageUrl } });
+  if (args.overviewUrl) {
+    userContent.push({ type: "image_url", image_url: { url: args.overviewUrl } });
+  }
+
+  const content = await chatComplete(system, userContent, key);
   if (!content) {
     throw new KieError("Prompt generator returned no text.");
   }

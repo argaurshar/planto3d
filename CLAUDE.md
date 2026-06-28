@@ -39,10 +39,19 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
 5. **Two-stage room render:**
    - **3a — prompt writer** — `/api/room` `action:"write"` calls a kie.ai vision
      LLM (`lib/kieChat.ts`) to auto-write a **photorealistic interior** prompt,
-     shown in an **editable** box (`components/RoomPrompt.tsx`). The prompt
-     **enumerates the exact spatial arrangement** (furniture positions/counts,
-     windows on which wall, doors). The approved overview is passed as a 2nd
-     image here for whole-home style consistency.
+     shown in an **editable** box (`components/RoomPrompt.tsx`). It first runs a
+     **spatial-extraction pass** (`lib/spatial.ts`): the same Gemini vision model
+     returns **2D bounding boxes** of the room's furniture/fixtures, windows and
+     doors, which are converted to a **detected layout** string and fed to the
+     writer as ground truth so the prompt **enumerates the exact spatial
+     arrangement** (positions/counts, windows on which wall, doors) instead of
+     guessing. Detection is best-effort — if it fails, the writer degrades to
+     describing the crop directly. The approved overview is passed as a 2nd image
+     here for whole-home style consistency. NOTE: this **grounds** the prompt but
+     does not hard-enforce geometry — the render (3b) is still text-to-image, so
+     layout fidelity is improved, not guaranteed (true enforcement would need
+     ControlNet/structural conditioning, which nano-banana / Gemini image models
+     don't expose).
    - **3b — render** — `action:"render"` is **text-to-image**: it sends ONLY the
      detailed prompt (no input image) to Nano Banana 2 → a photorealistic
      **eye-level interior** (`components/RoomResult.tsx`). The top-down crop is
@@ -92,8 +101,10 @@ drops straight into `<img src>`.
 
 `/api/room` takes an `action`:
 - `"write"` → `lib/kieChat.ts` `writeRoomPrompt` (vision LLM) returns
-  `{ prompt }` (falls back to a templated prompt if the LLM call fails, so the
-  user can always render).
+  `{ prompt }`. It runs a Gemini **spatial-extraction** pass first
+  (`lib/spatial.ts`: bounding boxes → detected-layout string) to ground the
+  prompt, then writes the interior prompt (falls back to a templated prompt if
+  the LLM call fails, so the user can always render).
 - `"render"` → `generateImage(roomRenderPrompt(prompt, variation, brief), [])`
   returns `{ image }` — **text-to-image, no input image** (the top-down crop is
   intentionally omitted so the render stays eye-level). Re-injects the brief's
@@ -130,6 +141,7 @@ app/
 lib/
   kie.ts                # server-only kie.ai image client (upload + createTask + poll)
   kieChat.ts            # server-only kie.ai vision-LLM prompt writer (Stage 3a)
+  spatial.ts            # Stage 3a spatial grounding: detect boxes → layout string
   prompts.ts            # overview + prompt-writer system + room render templates
   styles.ts             # interior-design style presets + brief resolution
   kieBrowser.ts         # static build: browser-side kie.ai client (user key)

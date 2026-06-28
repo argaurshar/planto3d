@@ -10,6 +10,7 @@
 // will fail with a network/CORS error — use the server build (Vercel) instead.
 
 import { promptWriterSystem, roomRenderPrompt } from "./prompts";
+import { SPATIAL_EXTRACTION_PROMPT, parseSpatialBoxes, describeLayout } from "./spatial";
 import type { DesignBrief, RoomType } from "./types";
 
 const UPLOAD_URL = "https://kieai.redpandaai.co/api/file-base64-upload";
@@ -128,34 +129,24 @@ export async function generateImageBrowser(
   return pollTask(taskId, apiKey);
 }
 
-/** Stage 3a in the browser: write an interior prompt from a room crop. */
-export async function writeRoomPromptBrowser(args: {
-  cropDataUrl: string;
-  brief: DesignBrief;
-  roomType: RoomType;
-  apiKey: string;
-  /** Optional hosted overview URL for whole-home style consistency. */
-  overviewUrl?: string;
-}): Promise<string> {
-  const imageUrl = await uploadBase64(args.cropDataUrl, args.apiKey, "room.png");
-  const hasOverview = Boolean(args.overviewUrl);
-  const userContent: Array<
-    { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }
-  > = [
-    { type: "text", text: "Write the photorealistic interior prompt for this room." },
-    { type: "image_url", image_url: { url: imageUrl } },
-  ];
-  if (args.overviewUrl) {
-    userContent.push({ type: "image_url", image_url: { url: args.overviewUrl } });
-  }
+type ChatContent =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
+/** POST a single (system + user) turn to the kie.ai chat endpoint, return text. */
+async function chatComplete(
+  system: string,
+  userContent: ChatContent[],
+  apiKey: string,
+): Promise<string> {
   const res = await fetch(`https://api.kie.ai/${chatModel()}/v1/chat/completions`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${args.apiKey}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: chatModel(),
       stream: false,
       messages: [
-        { role: "system", content: promptWriterSystem(args.brief, args.roomType, hasOverview) },
+        { role: "system", content: system },
         { role: "user", content: userContent },
       ],
     }),
@@ -166,7 +157,55 @@ export async function writeRoomPromptBrowser(args: {
   const json = (await res.json().catch(() => null)) as
     | { choices?: { message?: { content?: string } }[] }
     | null;
-  const content = json?.choices?.[0]?.message?.content?.trim();
+  return json?.choices?.[0]?.message?.content?.trim() ?? "";
+}
+
+/** Best-effort spatial detection on the room crop → layout string ("" on failure). */
+async function detectLayoutBrowser(imageUrl: string, apiKey: string): Promise<string> {
+  try {
+    const content = await chatComplete(
+      SPATIAL_EXTRACTION_PROMPT,
+      [
+        { type: "text", text: "Detect the objects in this room." },
+        { type: "image_url", image_url: { url: imageUrl } },
+      ],
+      apiKey,
+    );
+    return describeLayout(parseSpatialBoxes(content));
+  } catch {
+    return "";
+  }
+}
+
+/** Stage 3a in the browser: write an interior prompt from a room crop. */
+export async function writeRoomPromptBrowser(args: {
+  cropDataUrl: string;
+  brief: DesignBrief;
+  roomType: RoomType;
+  apiKey: string;
+  /** Optional hosted overview URL for whole-home style consistency. */
+  overviewUrl?: string;
+}): Promise<string> {
+  const imageUrl = await uploadBase64(args.cropDataUrl, args.apiKey, "room.png");
+  const layout = await detectLayoutBrowser(imageUrl, args.apiKey);
+  const hasOverview = Boolean(args.overviewUrl);
+
+  const userContent: ChatContent[] = [
+    { type: "text", text: "Write the photorealistic interior prompt for this room." },
+  ];
+  if (layout) {
+    userContent.push({ type: "text", text: `DETECTED SPATIAL LAYOUT:\n${layout}` });
+  }
+  userContent.push({ type: "image_url", image_url: { url: imageUrl } });
+  if (args.overviewUrl) {
+    userContent.push({ type: "image_url", image_url: { url: args.overviewUrl } });
+  }
+
+  const content = await chatComplete(
+    promptWriterSystem(args.brief, args.roomType, hasOverview, Boolean(layout)),
+    userContent,
+    args.apiKey,
+  );
   if (!content) throw new Error("Prompt generator returned no text.");
   return content
     .replace(/^```[a-z]*\s*/i, "")
