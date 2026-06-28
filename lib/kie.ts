@@ -156,7 +156,11 @@ export async function createTask(
     );
   }
   if (json.code && json.code !== 200) {
-    throw new KieError(messageForCode(json.code, json.msg || "createTask failed."));
+    const code = json.code;
+    throw new KieError(
+      messageForCode(code, json.msg || "createTask failed."),
+      code >= 400 && code < 600 ? code : 502,
+    );
   }
   const taskId = json.data?.taskId;
   if (!taskId) {

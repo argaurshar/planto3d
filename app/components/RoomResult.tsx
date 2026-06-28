@@ -119,7 +119,8 @@ export default function RoomResult({
         <button
           type="button"
           onClick={onPickAnother}
-          className="ml-auto rounded-lg border border-neutral-700 px-4 py-2 text-sm transition hover:bg-neutral-800"
+          disabled={loading}
+          className="ml-auto rounded-lg border border-neutral-700 px-4 py-2 text-sm transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Pick another room
         </button>

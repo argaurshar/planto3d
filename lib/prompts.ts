@@ -76,17 +76,29 @@ export function promptWriterSystem(
 
 /**
  * Stage 3b: wrap the (LLM-written or user-edited) interior prompt with render
- * constraints. `variation` (incremented by Regenerate) nudges a different take.
+ * constraints. The `brief` is re-injected here so style/lighting anchor every
+ * render even if the user edited it out of the prompt text. `variation`
+ * (incremented by Regenerate) nudges a different take.
+ *
+ * The attached image is the 2D plan crop — explicitly framed as a top-down
+ * LAYOUT reference only, so the model produces an eye-level photo rather than
+ * copying the plan's lines or viewpoint.
  */
 export function roomRenderPrompt(
   interiorPrompt: string,
   variation: number,
+  brief: DesignBrief,
 ): string {
+  const style = resolveStyleDescriptor(brief);
   const base = [
     interiorPrompt.trim(),
-    "Photorealistic architectural interior photography, realistic materials and",
-    "lighting, high detail. No text, no watermark, no dimensions, no floor-plan",
-    "lines — render the finished interior space only.",
+    `Overall style: ${style}. Lighting: ${brief.lighting}.`,
+    "IMPORTANT: the attached image is a 2D top-down architectural floor-plan crop,",
+    "provided ONLY as a layout reference for the room's shape and the positions of",
+    "walls, doors and windows. Do NOT copy its lines, colours, labels or top-down",
+    "viewpoint. Produce a photorealistic, ground-level EYE-LEVEL photograph of the",
+    "finished, furnished interior — realistic materials and lighting, high detail.",
+    "No text, no watermark, no dimensions, no floor-plan lines.",
   ].join(" ");
   if (variation <= 0) return base;
   return [

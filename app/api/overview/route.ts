@@ -9,7 +9,8 @@ import type { DesignBrief, GenerateImageResponse } from "@/lib/types";
 // Image generation is async at kie.ai (create + poll); allow a generous timeout.
 export const maxDuration = 120;
 
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // ~10MB of base64
+// Cap on the base64 data-URL *string* length (~10MB of characters ≈ ~7MB image).
+const MAX_DATA_URL_CHARS = 10 * 1024 * 1024;
 
 export async function POST(req: Request) {
   let body: { plan?: string; brief?: DesignBrief };
@@ -26,9 +27,9 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-  if (plan.length > MAX_IMAGE_BYTES) {
+  if (plan.length > MAX_DATA_URL_CHARS) {
     return NextResponse.json(
-      { error: "Plan image is too large (max ~7MB)." },
+      { error: "Plan image is too large (max ~7MB image)." },
       { status: 413 },
     );
   }

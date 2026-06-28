@@ -14,7 +14,8 @@ import type {
 
 export const maxDuration = 120;
 
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+// Cap on the base64 data-URL *string* length (~10MB of characters ≈ ~7MB image).
+const MAX_DATA_URL_CHARS = 10 * 1024 * 1024;
 
 type Action = "write" | "render" | "auto";
 
@@ -25,8 +26,6 @@ interface Body {
   roomType?: RoomType;
   prompt?: string; // interior prompt for render/auto
   variation?: number;
-  /** Optional already-hosted reference image (e.g. the approved overview). */
-  reference?: string;
 }
 
 function err(message: string, status: number) {
@@ -47,8 +46,8 @@ export async function POST(req: Request) {
   if (!room || typeof room !== "string") {
     return err("Missing `room` image (cropped data URL).", 400);
   }
-  if (room.length > MAX_IMAGE_BYTES) {
-    return err("Room crop is too large.", 413);
+  if (room.length > MAX_DATA_URL_CHARS) {
+    return err("Room crop is too large (max ~7MB image).", 413);
   }
   if (!dataUrlToInline(room)) {
     return err("`room` must be a base64 image data URL.", 400);
@@ -78,13 +77,9 @@ export async function POST(req: Request) {
     // Stage 3b: render from a provided prompt.
     if (action === "render") {
       const interior = (body.prompt ?? "").trim() || fallbackRoomPrompt(brief, roomType);
-      const inputs = [room];
-      if (body.reference && /^https?:\/\//i.test(body.reference)) {
-        inputs.push(body.reference);
-      }
       const { imageUrl } = await generateImage(
-        roomRenderPrompt(interior, variation),
-        inputs,
+        roomRenderPrompt(interior, variation, brief),
+        [room],
         "room.png",
       );
       const payload: GenerateImageResponse = { image: imageUrl, mimeType: "image/png" };
@@ -98,13 +93,9 @@ export async function POST(req: Request) {
     } catch {
       interior = fallbackRoomPrompt(brief, roomType);
     }
-    const inputs = [room];
-    if (body.reference && /^https?:\/\//i.test(body.reference)) {
-      inputs.push(body.reference);
-    }
     const { imageUrl } = await generateImage(
-      roomRenderPrompt(interior, variation),
-      inputs,
+      roomRenderPrompt(interior, variation, brief),
+      [room],
       "room.png",
     );
     const payload: GenerateImageResponse & RoomPromptResponse = {

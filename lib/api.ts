@@ -56,14 +56,12 @@ export async function requestRoomRender(
   roomDataUrl: string,
   prompt: string,
   variation: number,
-  reference?: string,
 ): Promise<string> {
   const data = await postJson<GenerateImageResponse>("/api/room", {
     action: "render",
     room: roomDataUrl,
     prompt,
     variation,
-    reference,
   });
   return data.image;
 }

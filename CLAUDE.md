@@ -37,8 +37,10 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
      LLM (`lib/kieChat.ts`) to auto-write a **photorealistic interior** prompt,
      shown in an **editable** box (`components/RoomPrompt.tsx`).
    - **3b — render** — `action:"render"` sends the (possibly edited) prompt +
-     the crop (+ the approved overview as a style reference) to Nano Banana 2 →
-     a photorealistic eye-level interior (`components/RoomResult.tsx`).
+     the crop to Nano Banana 2 → a photorealistic eye-level interior
+     (`components/RoomResult.tsx`). The crop is framed in the prompt as a
+     top-down **layout reference only**; style/lighting from the brief are
+     re-injected so every render stays consistent.
 6. **Regenerate** (vary the render) / **Edit prompt** / **Rewrite with AI**;
    every version is kept in `roomVersions[]` and is navigable.
 7. **Pick another room** and repeat.
@@ -82,10 +84,14 @@ drops straight into `<img src>`.
 - `"write"` → `lib/kieChat.ts` `writeRoomPrompt` (vision LLM) returns
   `{ prompt }` (falls back to a templated prompt if the LLM call fails, so the
   user can always render).
-- `"render"` → `generateImage(roomRenderPrompt(prompt, variation), [crop, ref?])`
-  returns `{ image }`. The approved overview URL is passed as an extra reference
-  for style consistency (`nano-banana-2` accepts multiple input images).
+- `"render"` → `generateImage(roomRenderPrompt(prompt, variation, brief), [crop])`
+  returns `{ image }`. The render prompt frames the crop as a **top-down layout
+  reference only** and re-injects the brief's style/lighting, so the output is a
+  photoreal eye-level interior (not a copied plan) and stays on-style.
 - `"auto"` → write then render in one call.
+
+> `generateImage` still accepts already-hosted `http(s)` URL inputs (passed
+> through without re-upload), but the room render currently sends only the crop.
 
 ## Project structure
 

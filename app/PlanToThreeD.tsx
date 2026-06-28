@@ -1,6 +1,6 @@
 "use client";
 
-import { useReducer } from "react";
+import { useReducer, useRef } from "react";
 import PlanUploader from "./components/PlanUploader";
 import OverviewView from "./components/OverviewView";
 import RoomSelector from "./components/RoomSelector";
@@ -128,7 +128,7 @@ function reducer(state: State, action: Action): State {
     case "SET_VERSION":
       return { ...state, currentVersion: action.index };
     case "EDIT_PROMPT_STEP":
-      return { ...state, step: "roomPrompt", stage: "idle", error: null };
+      return { ...state, step: "roomPrompt", loading: false, stage: "idle", error: null };
     case "PICK_ANOTHER":
       return {
         ...state,
@@ -138,6 +138,7 @@ function reducer(state: State, action: Action): State {
         roomVersions: [],
         currentVersion: 0,
         variation: 0,
+        loading: false,
         stage: "idle",
         error: null,
       };
@@ -157,23 +158,36 @@ function message(err: unknown): string {
 export default function PlanToThreeD() {
   const [state, dispatch] = useReducer(reducer, initialState);
 
+  // Monotonic token to invalidate stale async results. Any navigation that
+  // changes context (pick another room, edit prompt, reset, back) bumps it, so
+  // an in-flight request that resolves afterwards is ignored instead of
+  // corrupting state (e.g. appending a stale render to a reset history).
+  const reqId = useRef(0);
+  const nextReq = () => (reqId.current += 1);
+  const isStale = (id: number) => reqId.current !== id;
+
   async function generateOverview() {
     if (!state.planDataUrl) return;
+    const id = nextReq();
     dispatch({ type: "LOAD_OVERVIEW" });
     try {
       const image = await requestOverview(state.planDataUrl, state.brief);
+      if (isStale(id)) return;
       dispatch({ type: "OVERVIEW_DONE", dataUrl: image });
     } catch (err) {
+      if (isStale(id)) return;
       dispatch({ type: "ERROR", message: message(err) });
     }
   }
 
   // Write (or rewrite) the interior prompt for the current crop.
-  async function writePrompt(crop: string) {
+  async function writePrompt(crop: string, id: number) {
     try {
       const prompt = await requestRoomPrompt(crop, state.brief, state.roomType);
+      if (isStale(id)) return;
       dispatch({ type: "PROMPT_DONE", prompt });
     } catch (err) {
+      if (isStale(id)) return;
       // Leave the box editable so the user can still write a prompt by hand.
       dispatch({ type: "PROMPT_DONE", prompt: "" });
       dispatch({ type: "ERROR", message: message(err) });
@@ -183,53 +197,79 @@ export default function PlanToThreeD() {
   // Crop the selection, move to the prompt step, and auto-write a prompt.
   async function selectRoom(rect: Rect) {
     if (!state.planDataUrl) return;
+    const id = nextReq();
     let crop: string;
     try {
       crop = await cropToDataUrl(state.planDataUrl, rect);
     } catch (err) {
+      if (isStale(id)) return;
       dispatch({ type: "ERROR", message: message(err) });
       return;
     }
+    if (isStale(id)) return;
     dispatch({ type: "BEGIN_ROOM", dataUrl: crop });
-    await writePrompt(crop);
+    await writePrompt(crop, id);
   }
 
   function rewritePrompt() {
     if (!state.cropDataUrl) return;
+    const id = nextReq();
     dispatch({ type: "REWRITE" });
-    void writePrompt(state.cropDataUrl);
+    void writePrompt(state.cropDataUrl, id);
   }
 
   async function renderRoom() {
     if (!state.cropDataUrl) return;
+    const id = nextReq();
     dispatch({ type: "RENDER_START" });
     try {
       const image = await requestRoomRender(
         state.cropDataUrl,
         state.roomPrompt,
         state.variation,
-        state.overviewDataUrl ?? undefined,
       );
+      if (isStale(id)) return;
       dispatch({ type: "ROOM_DONE", dataUrl: image });
     } catch (err) {
+      if (isStale(id)) return;
       dispatch({ type: "ERROR", message: message(err) });
     }
   }
 
   async function regenerateRoom() {
     if (!state.cropDataUrl) return;
+    const id = nextReq();
     dispatch({ type: "REGEN_START" });
     try {
       const image = await requestRoomRender(
         state.cropDataUrl,
         state.roomPrompt,
         state.variation,
-        state.overviewDataUrl ?? undefined,
       );
+      if (isStale(id)) return;
       dispatch({ type: "ROOM_DONE", dataUrl: image });
     } catch (err) {
+      if (isStale(id)) return;
       dispatch({ type: "ERROR", message: message(err) });
     }
+  }
+
+  // Navigation that cancels any in-flight request by bumping the token.
+  function pickAnother() {
+    nextReq();
+    dispatch({ type: "PICK_ANOTHER" });
+  }
+  function editPromptStep() {
+    nextReq();
+    dispatch({ type: "EDIT_PROMPT_STEP" });
+  }
+  function goOverview() {
+    nextReq();
+    dispatch({ type: "GO_OVERVIEW" });
+  }
+  function resetAll() {
+    nextReq();
+    dispatch({ type: "RESET" });
   }
 
   return (
@@ -249,7 +289,7 @@ export default function PlanToThreeD() {
           onBriefChange={(patch) => dispatch({ type: "SET_BRIEF", patch })}
           onGenerate={generateOverview}
           onApprove={() => dispatch({ type: "APPROVE" })}
-          onReset={() => dispatch({ type: "RESET" })}
+          onReset={resetAll}
         />
       )}
 
@@ -260,7 +300,7 @@ export default function PlanToThreeD() {
           roomType={state.roomType}
           onRoomTypeChange={(value) => dispatch({ type: "SET_ROOM_TYPE", value })}
           onSelect={selectRoom}
-          onBack={() => dispatch({ type: "GO_OVERVIEW" })}
+          onBack={goOverview}
         />
       )}
 
@@ -273,7 +313,7 @@ export default function PlanToThreeD() {
           onPromptChange={(value) => dispatch({ type: "EDIT_PROMPT", value })}
           onRender={renderRoom}
           onRewrite={rewritePrompt}
-          onBack={() => dispatch({ type: "PICK_ANOTHER" })}
+          onBack={pickAnother}
         />
       )}
 
@@ -285,7 +325,7 @@ export default function PlanToThreeD() {
           loading={state.loading}
           error={state.error}
           onRegenerate={regenerateRoom}
-          onEditPrompt={() => dispatch({ type: "EDIT_PROMPT_STEP" })}
+          onEditPrompt={editPromptStep}
           onPrev={() =>
             dispatch({
               type: "SET_VERSION",
@@ -301,7 +341,7 @@ export default function PlanToThreeD() {
               ),
             })
           }
-          onPickAnother={() => dispatch({ type: "PICK_ANOTHER" })}
+          onPickAnother={pickAnother}
         />
       )}
 
