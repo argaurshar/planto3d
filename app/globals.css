@@ -7,8 +7,11 @@
 }
 
 @layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
   body {
-    @apply min-h-screen bg-neutral-950 text-neutral-100 antialiased;
+    @apply min-h-screen overflow-x-hidden bg-neutral-950 text-neutral-100 antialiased;
     background:
       radial-gradient(60rem 60rem at 85% -10%, rgba(16, 185, 129, 0.10), transparent 60%),
       radial-gradient(50rem 50rem at -10% 10%, rgba(56, 189, 248, 0.08), transparent 55%),
@@ -34,9 +37,9 @@
     @apply text-[11px] font-medium uppercase tracking-[0.14em] text-neutral-400;
   }
 
-  /* Buttons */
+  /* Buttons — min-height keeps a comfortable touch target on mobile */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50;
   }
   .btn-primary {
     @apply btn bg-emerald-500 text-neutral-950 shadow-lg shadow-emerald-500/20 hover:bg-emerald-400;
@@ -58,7 +61,7 @@
 
   /* Selectable chip (interior type / style grid) */
   .chip {
-    @apply cursor-pointer rounded-xl border border-white/10 bg-neutral-950/50 px-3 py-2 text-left text-sm text-neutral-300 transition hover:border-white/25 hover:bg-neutral-900;
+    @apply flex min-h-[44px] cursor-pointer items-center rounded-xl border border-white/10 bg-neutral-950/50 px-3 py-2 text-left text-sm text-neutral-300 transition hover:border-white/25 hover:bg-neutral-900;
   }
   .chip-active {
     @apply border-emerald-500/70 bg-emerald-500/10 text-emerald-200 ring-1 ring-emerald-500/30;

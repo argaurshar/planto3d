@@ -35,7 +35,7 @@ export default function CompareSlider({
   return (
     <div
       ref={ref}
-      className="media-frame relative select-none bg-white"
+      className="media-frame relative touch-none select-none bg-white"
       onPointerDown={(e) => {
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
         setDragging(true);
