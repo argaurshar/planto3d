@@ -72,9 +72,13 @@ export function promptWriterSystem(
     "showing a single room from above at an angle.",
     roomHint,
     overviewHint,
-    "Write ONE single-paragraph, richly detailed prompt for a PHOTOREALISTIC",
-    "interior render of that room, captured from a natural EYE-LEVEL perspective",
-    "as if standing in an open doorway looking into the space.",
+    "Write ONE single-paragraph, richly detailed prompt for a PHOTOREALISTIC 3D",
+    "CUT-AWAY render of that room, viewed from the SAME elevated three-quarter",
+    "(dollhouse) angle as the crop — NOT an eye-level photo and NOT a new camera.",
+    "First, identify and lock the fixed elements you can actually see and state",
+    "them explicitly: the count and position of each furniture piece and fixture,",
+    "the windows (and which wall each is on), and the doors — and require the",
+    "render to keep them exactly.",
     "CRITICAL — be 100% faithful to the layout shown in the crop: describe ONLY",
     "the walls, the room shape and proportions, the windows and doors (in their",
     "exact positions), and the furniture and fixtures that are actually visible,",
@@ -82,7 +86,7 @@ export function promptWriterSystem(
     "move, resize or duplicate any walls, windows, doors, furniture or fixtures,",
     "and do NOT introduce rooms, openings or objects that are not in the crop.",
     "Only specify materials, textiles, colours, decor finish, lighting and mood",
-    "(the things a photo would add) — never change the architecture or layout.",
+    "(the things a render adds) — never change the architecture or layout.",
     `Respect this style throughout: ${style}.`,
     `Lighting: ${brief.lighting}.`,
     "Output ONLY the prompt text — no preamble, no headings, no quotes, no lists.",
@@ -99,8 +103,10 @@ export function promptWriterSystem(
  *
  * The attached image is the cropped region of the 3D overview; the prompt
  * insists the render reproduce that room's layout EXACTLY (no hallucinating or
- * rearranging walls/openings/furniture), changing only the camera to eye-level
- * plus surface materials and lighting.
+ * rearranging walls/openings/furniture) as a photoreal 3D CUT-AWAY from the
+ * overview's own elevated angle — a faithful restyle, NOT an eye-level photo.
+ * This keeps the task an "edit" (Nano Banana's strength) instead of a
+ * hallucination-prone top-down→eye-level re-projection.
  */
 export function roomRenderPrompt(
   interiorPrompt: string,
@@ -112,24 +118,24 @@ export function roomRenderPrompt(
   const overviewClause = hasOverviewRef
     ? [
         "A SECOND reference image is a 3D axonometric overview of the whole home;",
-        "use it ONLY for architectural style, materials and palette consistency.",
-        "Do NOT adopt its top-down / parallel-projection camera — the output must",
-        "stay an eye-level photograph.",
+        "use it ONLY for architectural style, materials and palette consistency",
+        "across rooms.",
       ].join(" ")
     : "";
   const base = [
     interiorPrompt.trim(),
     `Overall style: ${style}. Lighting: ${brief.lighting}.`,
     "IMPORTANT: the first attached image is a cropped region of a 3D axonometric",
-    "overview of THIS room. Reproduce that EXACT room — recreate it faithfully as",
-    "a photorealistic, ground-level EYE-LEVEL photograph, only changing the camera",
-    "from the angled overview view to a natural standing eye-level viewpoint.",
-    "PRESERVE THE LAYOUT EXACTLY: the wall positions, the room's shape and",
-    "proportions, the window and door positions, and the furniture arrangement,",
-    "type and count must match the reference. Do NOT add, remove, move, resize,",
-    "duplicate or hallucinate any walls, windows, doors, furniture or fixtures,",
-    "and do NOT invent extra space or rooms. Change only surface materials,",
-    "textiles, colours, decor finish and lighting — never the architecture.",
+    "overview of THIS room. Re-render THAT SAME crop as a photorealistic 3D",
+    "cut-away from the SAME elevated three-quarter (dollhouse) viewpoint — keep",
+    "the overview's camera angle; do NOT switch to an eye-level photo and do NOT",
+    "move the camera into the room. Treat this as a faithful RESTYLE of the",
+    "existing 3D view: keep the wall positions, room shape and proportions, the",
+    "window and door positions, and the furniture arrangement, type and count",
+    "EXACTLY as shown. Do NOT add, remove, move, resize, duplicate or hallucinate",
+    "any walls, windows, doors, furniture or fixtures, and do NOT invent extra",
+    "space or rooms. Change ONLY surface materials, textures, colours, decor",
+    "finish and lighting to make it photorealistic — never the architecture.",
     overviewClause,
     "Realistic materials and lighting, high detail.",
     "No text, no watermark, no dimensions, no floor-plan lines.",
@@ -139,9 +145,9 @@ export function roomRenderPrompt(
   if (variation <= 0) return base;
   return [
     base,
-    `Variation #${variation}: keep the SAME layout, walls, windows, doors and`,
-    "furniture placement exactly — vary only the lighting/time-of-day, material",
-    "and textile finishes, decor accents and eye-level camera height.",
+    `Variation #${variation}: keep the SAME layout, walls, windows, doors,`,
+    "furniture placement and camera angle exactly — vary only the",
+    "lighting/time-of-day, material and textile finishes, and decor accents.",
   ].join(" ");
 }
 
@@ -156,11 +162,13 @@ export function fallbackRoomPrompt(
   const style = resolveStyleDescriptor(brief);
   const room = roomType && roomType !== "auto" ? roomType : "room";
   return [
-    `Photorealistic eye-level interior render of a ${room}, reproducing this`,
-    "cropped region of a 3D axonometric overview EXACTLY. Preserve the wall",
-    "positions, room shape and proportions, window and door positions, and the",
-    "furniture arrangement and count shown — do NOT add, remove, move or invent",
-    "anything in the layout; change only materials, finishes and lighting.",
+    `Photorealistic 3D cut-away render of a ${room} from the SAME elevated`,
+    "three-quarter (dollhouse) angle as this cropped region of a 3D axonometric",
+    "overview, reproduced EXACTLY. Preserve the wall positions, room shape and",
+    "proportions, window and door positions, and the furniture arrangement and",
+    "count shown — do NOT add, remove, move or invent anything in the layout;",
+    "change only materials, finishes and lighting. Keep the camera angle (no",
+    "eye-level photo).",
     `STYLE: ${style}. Lighting: ${brief.lighting}.`,
   ].join(" ");
 }
