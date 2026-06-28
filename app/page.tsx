@@ -3,13 +3,13 @@ import ApiKeyBar from "./components/ApiKeyBar";
 
 export default function Home() {
   return (
-    <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-8 px-6 py-12">
+    <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-6 px-4 py-8 sm:gap-8 sm:px-6 sm:py-12">
       <header className="space-y-3">
         <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-neutral-300">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
           plan → 3D · powered by Nano Banana 2
         </span>
-        <h1 className="text-4xl font-semibold tracking-tight">
+        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
           planto
           <span className="bg-gradient-to-r from-emerald-400 to-sky-400 bg-clip-text text-transparent">
             3d
