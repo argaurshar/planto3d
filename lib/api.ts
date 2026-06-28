@@ -67,11 +67,15 @@ export async function requestOverview(
   return data.image;
 }
 
-/** Stage 3a: auto-write the interior prompt for a cropped room. */
+/**
+ * Stage 3a: auto-write the interior prompt for a cropped room. The overview URL
+ * (if available) is always passed so the LLM keeps whole-home style consistency.
+ */
 export async function requestRoomPrompt(
   roomDataUrl: string,
   brief: DesignBrief,
   roomType: RoomType,
+  overviewUrl?: string,
 ): Promise<string> {
   if (IS_STATIC) {
     return writeRoomPromptBrowser({
@@ -79,6 +83,7 @@ export async function requestRoomPrompt(
       brief,
       roomType,
       apiKey: requireKey(),
+      overviewUrl,
     });
   }
   const data = await postJson<RoomPromptResponse>("/api/room", {
@@ -86,21 +91,28 @@ export async function requestRoomPrompt(
     room: roomDataUrl,
     brief,
     roomType,
+    reference: overviewUrl,
   });
   return data.prompt;
 }
 
-/** Stage 3b: render a photorealistic interior from a (possibly edited) prompt. */
+/**
+ * Stage 3b: render a photorealistic interior from a (possibly edited) prompt.
+ * `overviewUrl` is passed only when the user opts to use it as a style
+ * reference for the render.
+ */
 export async function requestRoomRender(
   roomDataUrl: string,
   prompt: string,
   variation: number,
   brief: DesignBrief,
+  overviewUrl?: string,
 ): Promise<string> {
   if (IS_STATIC) {
+    const inputs = overviewUrl ? [roomDataUrl, overviewUrl] : [roomDataUrl];
     return generateImageBrowser(
-      roomRenderPrompt(prompt, variation, brief),
-      [roomDataUrl],
+      roomRenderPrompt(prompt, variation, brief, Boolean(overviewUrl)),
+      inputs,
       requireKey(),
       "room.png",
     );
@@ -111,6 +123,7 @@ export async function requestRoomRender(
     prompt,
     variation,
     brief,
+    reference: overviewUrl,
   });
   return data.image;
 }

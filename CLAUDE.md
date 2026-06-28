@@ -35,12 +35,15 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
 5. **Two-stage room render:**
    - **3a — prompt writer** — `/api/room` `action:"write"` calls a kie.ai vision
      LLM (`lib/kieChat.ts`) to auto-write a **photorealistic interior** prompt,
-     shown in an **editable** box (`components/RoomPrompt.tsx`).
+     shown in an **editable** box (`components/RoomPrompt.tsx`). The approved
+     **overview is always passed as a 2nd image** here for whole-home style
+     consistency (text-only influence — no camera risk).
    - **3b — render** — `action:"render"` sends the (possibly edited) prompt +
      the crop to Nano Banana 2 → a photorealistic eye-level interior
      (`components/RoomResult.tsx`). The crop is framed in the prompt as a
      top-down **layout reference only**; style/lighting from the brief are
-     re-injected so every render stays consistent.
+     re-injected so every render stays consistent. An **opt-in toggle** can also
+     pass the overview as a labeled style reference for the render.
 6. **Regenerate** (vary the render) / **Edit prompt** / **Rewrite with AI**;
    every version is kept in `roomVersions[]` and is navigable.
 7. **Pick another room** and repeat.
@@ -90,8 +93,11 @@ drops straight into `<img src>`.
   photoreal eye-level interior (not a copied plan) and stays on-style.
 - `"auto"` → write then render in one call.
 
-> `generateImage` still accepts already-hosted `http(s)` URL inputs (passed
-> through without re-upload), but the room render currently sends only the crop.
+The optional `reference` (the overview URL) is accepted by `write`/`render`/`auto`
+but **host-validated** via `lib/refs.ts` `isAllowedReference` (https + a kie.ai
+host) before being forwarded — `write` always passes it; `render` only when the
+user enables the toggle. `generateImage` passes `http(s)` URL inputs through
+without re-upload, so the overview goes straight in as a 2nd `image_input`.
 
 ## Project structure
 

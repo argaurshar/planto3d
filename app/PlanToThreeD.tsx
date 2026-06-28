@@ -26,6 +26,8 @@ interface State {
   currentVersion: number;
   /** Increments on each room render to vary the prompt. */
   variation: number;
+  /** Whether to also feed the overview into the render (Stage 3b). */
+  useOverviewInRender: boolean;
   /** Used by overview generation and room-result regeneration. */
   loading: boolean;
   /** Drives the Stage 3a/3b UI in RoomPrompt. */
@@ -49,6 +51,7 @@ type Action =
   | { type: "REGEN_START" }
   | { type: "ROOM_DONE"; dataUrl: string }
   | { type: "SET_VERSION"; index: number }
+  | { type: "SET_USE_OVERVIEW"; value: boolean }
   | { type: "EDIT_PROMPT_STEP" }
   | { type: "PICK_ANOTHER" }
   | { type: "ERROR"; message: string }
@@ -65,6 +68,7 @@ const initialState: State = {
   roomVersions: [],
   currentVersion: 0,
   variation: 0,
+  useOverviewInRender: false,
   loading: false,
   stage: "idle",
   error: null,
@@ -127,6 +131,8 @@ function reducer(state: State, action: Action): State {
     }
     case "SET_VERSION":
       return { ...state, currentVersion: action.index };
+    case "SET_USE_OVERVIEW":
+      return { ...state, useOverviewInRender: action.value };
     case "EDIT_PROMPT_STEP":
       return { ...state, step: "roomPrompt", loading: false, stage: "idle", error: null };
     case "PICK_ANOTHER":
@@ -183,7 +189,12 @@ export default function PlanToThreeD() {
   // Write (or rewrite) the interior prompt for the current crop.
   async function writePrompt(crop: string, id: number) {
     try {
-      const prompt = await requestRoomPrompt(crop, state.brief, state.roomType);
+      const prompt = await requestRoomPrompt(
+        crop,
+        state.brief,
+        state.roomType,
+        state.overviewDataUrl ?? undefined,
+      );
       if (isStale(id)) return;
       dispatch({ type: "PROMPT_DONE", prompt });
     } catch (err) {
@@ -228,6 +239,7 @@ export default function PlanToThreeD() {
         state.roomPrompt,
         state.variation,
         state.brief,
+        state.useOverviewInRender ? state.overviewDataUrl ?? undefined : undefined,
       );
       if (isStale(id)) return;
       dispatch({ type: "ROOM_DONE", dataUrl: image });
@@ -247,6 +259,7 @@ export default function PlanToThreeD() {
         state.roomPrompt,
         state.variation,
         state.brief,
+        state.useOverviewInRender ? state.overviewDataUrl ?? undefined : undefined,
       );
       if (isStale(id)) return;
       dispatch({ type: "ROOM_DONE", dataUrl: image });
@@ -312,6 +325,9 @@ export default function PlanToThreeD() {
           prompt={state.roomPrompt}
           stage={state.stage}
           error={state.error}
+          useOverview={state.useOverviewInRender}
+          hasOverview={Boolean(state.overviewDataUrl)}
+          onToggleOverview={(value) => dispatch({ type: "SET_USE_OVERVIEW", value })}
           onPromptChange={(value) => dispatch({ type: "EDIT_PROMPT", value })}
           onRender={renderRoom}
           onRewrite={rewritePrompt}
