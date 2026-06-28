@@ -1,8 +1,10 @@
+import { proxiedImageUrl } from "./imageProxy";
+
 /**
  * Download an image to the user's device. Generated images are remote (kie.ai)
- * URLs, so a plain <a download> is ignored cross-origin — fetch the bytes as a
- * blob and download that. If the fetch is blocked (CORS), fall back to opening
- * the image in a new tab so the user can still save it.
+ * URLs without CORS, so a plain <a download> is ignored and a direct fetch is
+ * blocked — fetch the bytes through a CORS-enabled image proxy and download the
+ * blob. If even that fails, fall back to opening the image in a new tab.
  */
 export async function downloadImage(url: string, filename: string): Promise<void> {
   // data: URLs (e.g. a local crop) can be downloaded directly.
@@ -11,7 +13,7 @@ export async function downloadImage(url: string, filename: string): Promise<void
     return;
   }
   try {
-    const res = await fetch(url, { mode: "cors" });
+    const res = await fetch(proxiedImageUrl(url), { mode: "cors" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const blob = await res.blob();
     const objUrl = URL.createObjectURL(blob);

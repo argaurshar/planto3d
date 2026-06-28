@@ -31,8 +31,9 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
    (`components/OverviewView.tsx`). **Approve** to continue.
 4. **Draw a box** around a room **on the generated 3D overview**
    (`components/RoomSelector.tsx`); the selection is captured in **natural image
-   pixels** and cropped client-side (`lib/crop.ts`, which fetches the remote
-   overview to a blob first so the canvas isn't tainted). Then a per-room
+   pixels** and cropped client-side (`lib/crop.ts`, which loads the remote
+   overview via a CORS image proxy — `lib/imageProxy.ts` — so the canvas isn't
+   tainted). Then a per-room
    **setup table** (`components/RoomSetup.tsx`) picks the **interior type +
    style** (overrides the brief's style for this room only).
 5. **Two-stage room render:**
