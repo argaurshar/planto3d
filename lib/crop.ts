@@ -37,37 +37,53 @@ export function clampRect(rect: Rect, naturalWidth: number, naturalHeight: numbe
  * Crop `rect` (in natural pixels) out of a source image and return a PNG data
  * URL. Loads the source from a data URL so it works fully client-side.
  */
-export async function cropToDataUrl(sourceDataUrl: string, rect: Rect): Promise<string> {
-  const img = await loadImage(sourceDataUrl);
-  const safe = clampRect(rect, img.naturalWidth, img.naturalHeight);
-  const w = Math.max(1, Math.round(safe.width));
-  const h = Math.max(1, Math.round(safe.height));
+export async function cropToDataUrl(source: string, rect: Rect): Promise<string> {
+  const { img, revoke } = await loadImage(source);
+  try {
+    const safe = clampRect(rect, img.naturalWidth, img.naturalHeight);
+    const w = Math.max(1, Math.round(safe.width));
+    const h = Math.max(1, Math.round(safe.height));
 
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Could not get 2D canvas context.");
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Could not get 2D canvas context.");
 
-  ctx.drawImage(
-    img,
-    Math.round(safe.x),
-    Math.round(safe.y),
-    w,
-    h,
-    0,
-    0,
-    w,
-    h,
-  );
-  return canvas.toDataURL("image/png");
+    ctx.drawImage(img, Math.round(safe.x), Math.round(safe.y), w, h, 0, 0, w, h);
+    return canvas.toDataURL("image/png");
+  } finally {
+    revoke();
+  }
 }
 
-function loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("Failed to load image for cropping."));
-    img.src = src;
+/**
+ * Load an image for cropping. data: URLs load directly; remote http(s) URLs
+ * (e.g. the generated overview) are fetched to a blob first and loaded via an
+ * object URL, so drawing them to a canvas does NOT taint it (which would block
+ * toDataURL). Returns a `revoke` to free any object URL after use.
+ */
+async function loadImage(
+  src: string,
+): Promise<{ img: HTMLImageElement; revoke: () => void }> {
+  let objectUrl: string | null = null;
+  let imgSrc = src;
+  if (/^https?:\/\//i.test(src)) {
+    const res = await fetch(src, { mode: "cors" });
+    if (!res.ok) {
+      throw new Error(
+        "Couldn't load the overview image to crop (the image host blocked it).",
+      );
+    }
+    const blob = await res.blob();
+    objectUrl = URL.createObjectURL(blob);
+    imgSrc = objectUrl;
+  }
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const el = new Image();
+    el.onload = () => resolve(el);
+    el.onerror = () => reject(new Error("Failed to load image for cropping."));
+    el.src = imgSrc;
   });
+  return { img, revoke: () => objectUrl && URL.revokeObjectURL(objectUrl) };
 }

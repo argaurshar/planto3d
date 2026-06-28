@@ -68,15 +68,17 @@ export function promptWriterSystem(
   return [
     "You are an expert architectural-visualization prompt writer specializing in",
     "high-end interior renders.",
-    "You will be given a cropped region of a 2D floor plan containing a single room.",
+    "You will be given a cropped region of a 3D axonometric overview render",
+    "showing a single room from above at an angle.",
     roomHint,
     overviewHint,
     "Write ONE single-paragraph, richly detailed prompt for a PHOTOREALISTIC",
     "interior render of that room, captured from a natural EYE-LEVEL perspective",
     "as if standing in an open doorway looking into the space.",
     "Describe: the room type, camera viewpoint, wall/floor/ceiling materials,",
-    "the main furniture and fixtures and their placement (faithful to the plan's",
-    "layout, doors and windows), textiles, decor, and the lighting and mood.",
+    "the main furniture and fixtures and their placement (faithful to the room's",
+    "layout, doors and windows shown in the crop), textiles, decor, and the",
+    "lighting and mood.",
     `Respect this style throughout: ${style}.`,
     `Lighting: ${brief.lighting}.`,
     "Output ONLY the prompt text — no preamble, no headings, no quotes, no lists.",
@@ -113,13 +115,13 @@ export function roomRenderPrompt(
   const base = [
     interiorPrompt.trim(),
     `Overall style: ${style}. Lighting: ${brief.lighting}.`,
-    "IMPORTANT: the first attached image is a 2D top-down architectural floor-plan",
-    "crop, provided ONLY as a layout reference for the room's shape and the",
-    "positions of walls, doors and windows. Do NOT copy its lines, colours, labels",
-    "or top-down viewpoint.",
+    "IMPORTANT: the first attached image is a cropped region of a 3D axonometric",
+    "overview of THIS room — use it as the reference for the room's shape, walls,",
+    "windows, doors and overall furnishing. Recreate that same room as a",
+    "photorealistic, ground-level EYE-LEVEL photograph; do NOT keep its angled,",
+    "top-down/parallel-projection overview camera.",
     overviewClause,
-    "Produce a photorealistic, ground-level EYE-LEVEL photograph of the finished,",
-    "furnished interior — realistic materials and lighting, high detail.",
+    "Realistic materials and lighting, high detail.",
     "No text, no watermark, no dimensions, no floor-plan lines.",
   ]
     .filter(Boolean)
@@ -145,8 +147,8 @@ export function fallbackRoomPrompt(
   const room = roomType && roomType !== "auto" ? roomType : "room";
   return [
     `Photorealistic eye-level interior render of a ${room}, based on this cropped`,
-    "floor-plan region. Faithful to the plan's layout, doors and windows, with",
-    "plausible furniture and fixtures for the room type.",
+    "region of a 3D axonometric overview. Faithful to the room's layout, doors",
+    "and windows, with plausible furniture and fixtures for the room type.",
     `STYLE: ${style}. Lighting: ${brief.lighting}.`,
   ].join(" ");
 }
