@@ -99,33 +99,29 @@ export async function requestRoomPrompt(
 }
 
 /**
- * Stage 3b: render a photorealistic interior from a (possibly edited) prompt.
- * `overviewUrl` is passed only when the user opts to use it as a style
- * reference for the render.
+ * Stage 3b: render a photorealistic eye-level interior from the (possibly
+ * edited) detailed prompt. This is TEXT-TO-IMAGE — no image is sent to the
+ * renderer, because feeding the top-down crop dragged the output to a top view.
+ * The crop is only used by the Stage-3a prompt writer.
  */
 export async function requestRoomRender(
-  roomDataUrl: string,
   prompt: string,
   variation: number,
   brief: DesignBrief,
-  overviewUrl?: string,
 ): Promise<string> {
   if (IS_STATIC) {
-    const inputs = overviewUrl ? [roomDataUrl, overviewUrl] : [roomDataUrl];
     return generateImageBrowser(
-      roomRenderPrompt(prompt, variation, brief, Boolean(overviewUrl)),
-      inputs,
+      roomRenderPrompt(prompt, variation, brief),
+      [],
       requireKey(),
       "room.png",
     );
   }
   const data = await postJson<GenerateImageResponse>("/api/room", {
     action: "render",
-    room: roomDataUrl,
     prompt,
     variation,
     brief,
-    reference: overviewUrl,
   });
   return data.image;
 }

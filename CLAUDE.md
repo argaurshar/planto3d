@@ -39,17 +39,16 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
 5. **Two-stage room render:**
    - **3a — prompt writer** — `/api/room` `action:"write"` calls a kie.ai vision
      LLM (`lib/kieChat.ts`) to auto-write a **photorealistic interior** prompt,
-     shown in an **editable** box (`components/RoomPrompt.tsx`). The approved
-     **overview is always passed as a 2nd image** here for whole-home style
-     consistency (text-only influence — no camera risk).
-   - **3b — render** — `action:"render"` sends the (possibly edited) prompt +
-     the crop to Nano Banana 2 → a photorealistic **3D cut-away** of the room
-     (`components/RoomResult.tsx`). The render keeps the overview's **elevated
-     angle** and is framed as a faithful **restyle** (preserve geometry/openings/
-     furniture exactly — only upgrade materials/lighting), which avoids the
-     hallucination of a top-down→eye-level re-projection. Style/lighting from the
-     brief are re-injected; an **opt-in toggle** passes the full overview as a
-     labeled style reference.
+     shown in an **editable** box (`components/RoomPrompt.tsx`). The prompt
+     **enumerates the exact spatial arrangement** (furniture positions/counts,
+     windows on which wall, doors). The approved overview is passed as a 2nd
+     image here for whole-home style consistency.
+   - **3b — render** — `action:"render"` is **text-to-image**: it sends ONLY the
+     detailed prompt (no input image) to Nano Banana 2 → a photorealistic
+     **eye-level interior** (`components/RoomResult.tsx`). The top-down crop is
+     deliberately **not** fed to the renderer (doing so dragged outputs back to a
+     top view); the crop only informs the Stage-3a prompt writer. Style/lighting
+     from the brief are re-injected.
 6. **Regenerate** (vary the render) / **Edit prompt** / **Rewrite with AI**;
    every version is kept in `roomVersions[]` and is navigable.
 7. **Pick another room** and repeat.
@@ -58,8 +57,9 @@ Key principles: a global **design brief**, user-confirmed incremental
 generation, draw-a-box selection, a **transparent editable prompt** between
 selection and render, and regeneration as a first-class action that preserves
 the selected room. The overview is **axonometric**; rooms are **photorealistic
-3D cut-aways at the overview's angle** (a faithful restyle, not an eye-level
-re-projection — chosen to minimize layout hallucination).
+eye-level interiors**, rendered **text-to-image** from a detailed,
+layout-enumerating prompt (the crop feeds only the prompt writer, which keeps
+the render from collapsing back to a top-down view).
 
 ## Tech stack
 
@@ -94,17 +94,16 @@ drops straight into `<img src>`.
 - `"write"` → `lib/kieChat.ts` `writeRoomPrompt` (vision LLM) returns
   `{ prompt }` (falls back to a templated prompt if the LLM call fails, so the
   user can always render).
-- `"render"` → `generateImage(roomRenderPrompt(prompt, variation, brief), [crop])`
-  returns `{ image }`. The render prompt frames the crop as a **top-down layout
-  reference only** and re-injects the brief's style/lighting, so the output is a
-  photoreal 3D cut-away (faithful restyle at the overview's angle) and stays on-style.
-- `"auto"` → write then render in one call.
+- `"render"` → `generateImage(roomRenderPrompt(prompt, variation, brief), [])`
+  returns `{ image }` — **text-to-image, no input image** (the top-down crop is
+  intentionally omitted so the render stays eye-level). Re-injects the brief's
+  style/lighting.
+- `"auto"` → write (from the crop) then render text-to-image in one call.
 
-The optional `reference` (the overview URL) is accepted by `write`/`render`/`auto`
-but **host-validated** via `lib/refs.ts` `isAllowedReference` (https + a kie.ai
-host) before being forwarded — `write` always passes it; `render` only when the
-user enables the toggle. `generateImage` passes `http(s)` URL inputs through
-without re-upload, so the overview goes straight in as a 2nd `image_input`.
+The optional `reference` (the overview URL) is accepted by `write`/`auto` and
+**host-validated** via `lib/refs.ts` `isAllowedReference` (https + a kie.ai host)
+before being forwarded to the prompt writer for whole-home consistency. The
+`render` action takes no image.
 
 ## Project structure
 

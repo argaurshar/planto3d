@@ -6,9 +6,6 @@ interface Props {
   /** "writing" while the LLM drafts the prompt; "rendering" during the image. */
   stage: "idle" | "writing" | "rendering";
   error: string | null;
-  useOverview: boolean;
-  hasOverview: boolean;
-  onToggleOverview: (value: boolean) => void;
   onPromptChange: (value: string) => void;
   onRender: () => void;
   onRewrite: () => void;
@@ -25,9 +22,6 @@ export default function RoomPrompt({
   prompt,
   stage,
   error,
-  useOverview,
-  hasOverview,
-  onToggleOverview,
   onPromptChange,
   onRender,
   onRewrite,
@@ -80,25 +74,6 @@ export default function RoomPrompt({
       </div>
 
       {error && <p className="text-sm text-red-400">{error}</p>}
-
-      {hasOverview && (
-        <label className="flex items-start gap-2 text-sm text-neutral-400">
-          <input
-            type="checkbox"
-            checked={useOverview}
-            disabled={busy}
-            onChange={(e) => onToggleOverview(e.target.checked)}
-            className="mt-0.5 accent-emerald-500"
-          />
-          <span>
-            Also use the axonometric overview as a style reference for the render{" "}
-            <span className="text-neutral-500">
-              (experimental — keeps materials consistent with the whole home; may
-              slightly nudge the camera toward a 3D-model look)
-            </span>
-          </span>
-        </label>
-      )}
 
       <div className="flex flex-wrap items-center gap-3">
         <button

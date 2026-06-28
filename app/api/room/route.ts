@@ -45,17 +45,6 @@ export async function POST(req: Request) {
 
   const action: Action = body.action ?? "auto";
 
-  const room = body.room;
-  if (!room || typeof room !== "string") {
-    return err("Missing `room` image (cropped data URL).", 400);
-  }
-  if (room.length > MAX_DATA_URL_CHARS) {
-    return err("Room crop is too large (max ~7MB image).", 413);
-  }
-  if (!dataUrlToInline(room)) {
-    return err("`room` must be a base64 image data URL.", 400);
-  }
-
   const brief: DesignBrief = { ...DEFAULT_BRIEF, ...(body.brief ?? {}) };
   const roomType: RoomType = body.roomType ?? "auto";
   const variation =
@@ -65,12 +54,27 @@ export async function POST(req: Request) {
   // Only forward the reference if it is an https URL on a kie.ai host.
   const reference = isAllowedReference(body.reference) ? body.reference : undefined;
 
+  // The crop is only needed by the prompt writer (write/auto). The render is
+  // text-to-image and needs no image.
+  const room = body.room;
+  if (action !== "render") {
+    if (!room || typeof room !== "string") {
+      return err("Missing `room` image (cropped data URL).", 400);
+    }
+    if (room.length > MAX_DATA_URL_CHARS) {
+      return err("Room crop is too large (max ~7MB image).", 413);
+    }
+    if (!dataUrlToInline(room)) {
+      return err("`room` must be a base64 image data URL.", 400);
+    }
+  }
+
   try {
     // Stage 3a: write (or fall back to a templated prompt).
     if (action === "write") {
       let prompt: string;
       try {
-        prompt = await writeRoomPrompt({ cropDataUrl: room, brief, roomType, overviewUrl: reference });
+        prompt = await writeRoomPrompt({ cropDataUrl: room!, brief, roomType, overviewUrl: reference });
       } catch {
         // Degrade gracefully so the user can still render.
         prompt = fallbackRoomPrompt(brief, roomType);
@@ -79,30 +83,28 @@ export async function POST(req: Request) {
       return NextResponse.json(payload);
     }
 
-    // Stage 3b: render from a provided prompt.
+    // Stage 3b: render from the detailed prompt (text-to-image, no input image).
     if (action === "render") {
       const interior = (body.prompt ?? "").trim() || fallbackRoomPrompt(brief, roomType);
-      const inputs = reference ? [room, reference] : [room];
       const { imageUrl } = await generateImage(
-        roomRenderPrompt(interior, variation, brief, Boolean(reference)),
-        inputs,
+        roomRenderPrompt(interior, variation, brief),
+        [],
         "room.png",
       );
       const payload: GenerateImageResponse = { image: imageUrl, mimeType: "image/png" };
       return NextResponse.json(payload);
     }
 
-    // action === "auto": write then render in one call.
+    // action === "auto": write (from the crop) then render text-to-image.
     let interior: string;
     try {
-      interior = await writeRoomPrompt({ cropDataUrl: room, brief, roomType, overviewUrl: reference });
+      interior = await writeRoomPrompt({ cropDataUrl: room!, brief, roomType, overviewUrl: reference });
     } catch {
       interior = fallbackRoomPrompt(brief, roomType);
     }
-    const inputs = reference ? [room, reference] : [room];
     const { imageUrl } = await generateImage(
-      roomRenderPrompt(interior, variation, brief, Boolean(reference)),
-      inputs,
+      roomRenderPrompt(interior, variation, brief),
+      [],
       "room.png",
     );
     const payload: GenerateImageResponse & RoomPromptResponse = {
