@@ -56,7 +56,7 @@ export default function RoomResult({
               {current && (
                 <DownloadButton
                   url={current}
-                  filename={`planto3d-room-v${currentIndex + 1}.png`}
+                  filename={`voxa-room-v${currentIndex + 1}.png`}
                 />
               )}
             </div>

@@ -37,7 +37,7 @@ export default function OverviewView({
             {overviewDataUrl ? "2D ↔ 3D — drag to compare" : "Your 2D plan"}
           </span>
           {overviewDataUrl && (
-            <DownloadButton url={overviewDataUrl} filename="planto3d-overview.png" />
+            <DownloadButton url={overviewDataUrl} filename="voxa-overview.png" />
           )}
         </div>
 

@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "planto3d — plan to 3D",
+  title: "Voxa — plan to 3D",
   description:
     "Turn a 2D floor plan into AI-generated 3D axonometric views, room by room.",
 };
