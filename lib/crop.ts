@@ -2,6 +2,8 @@
 // plan image. A rect is stored in NATURAL image pixel coordinates so the crop
 // is full-resolution regardless of how the image is scaled on screen.
 
+import { proxiedImageUrl } from "./imageProxy";
+
 export interface Rect {
   x: number;
   y: number;
@@ -58,32 +60,23 @@ export async function cropToDataUrl(source: string, rect: Rect): Promise<string>
 }
 
 /**
- * Load an image for cropping. data: URLs load directly; remote http(s) URLs
- * (e.g. the generated overview) are fetched to a blob first and loaded via an
- * object URL, so drawing them to a canvas does NOT taint it (which would block
- * toDataURL). Returns a `revoke` to free any object URL after use.
+ * Load an image for cropping. data: URLs load directly. Remote http(s) URLs
+ * (e.g. the generated overview, hosted on a CDN without CORS) are loaded
+ * cross-origin-clean via an image proxy (see lib/imageProxy), so drawing them
+ * to a canvas does NOT taint it and `toDataURL` keeps working.
  */
-async function loadImage(
+function loadImage(
   src: string,
 ): Promise<{ img: HTMLImageElement; revoke: () => void }> {
-  let objectUrl: string | null = null;
-  let imgSrc = src;
-  if (/^https?:\/\//i.test(src)) {
-    const res = await fetch(src, { mode: "cors" });
-    if (!res.ok) {
-      throw new Error(
-        "Couldn't load the overview image to crop (the image host blocked it).",
-      );
-    }
-    const blob = await res.blob();
-    objectUrl = URL.createObjectURL(blob);
-    imgSrc = objectUrl;
-  }
-  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+  const isRemote = /^https?:\/\//i.test(src);
+  return new Promise((resolve, reject) => {
     const el = new Image();
-    el.onload = () => resolve(el);
-    el.onerror = () => reject(new Error("Failed to load image for cropping."));
-    el.src = imgSrc;
+    if (isRemote) el.crossOrigin = "anonymous";
+    el.onload = () => resolve({ img: el, revoke: () => {} });
+    el.onerror = () =>
+      reject(
+        new Error("Couldn't load the overview image to crop. Try regenerating the overview."),
+      );
+    el.src = isRemote ? proxiedImageUrl(src) : src;
   });
-  return { img, revoke: () => objectUrl && URL.revokeObjectURL(objectUrl) };
 }
