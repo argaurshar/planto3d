@@ -28,7 +28,9 @@ export function setStoredKey(key: string): void {
 function requireKey(): string {
   const key = getStoredKey();
   if (!key) {
-    throw new Error("Add your kie.ai API key at the top of the page to generate.");
+    throw new Error(
+      "Add your kie.ai API key (link at the bottom of the page) to generate.",
+    );
   }
   return key;
 }
