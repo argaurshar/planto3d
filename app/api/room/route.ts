@@ -4,6 +4,7 @@ import { generateImage, KieError } from "@/lib/kie";
 import { writeRoomPrompt } from "@/lib/kieChat";
 import { dataUrlToInline } from "@/lib/image";
 import { roomRenderPrompt, fallbackRoomPrompt } from "@/lib/prompts";
+import { isAllowedReference } from "@/lib/refs";
 import { DEFAULT_BRIEF } from "@/lib/styles";
 import type {
   DesignBrief,
@@ -26,6 +27,8 @@ interface Body {
   roomType?: RoomType;
   prompt?: string; // interior prompt for render/auto
   variation?: number;
+  /** Hosted overview URL used as an extra reference (validated to kie.ai hosts). */
+  reference?: string;
 }
 
 function err(message: string, status: number) {
@@ -59,13 +62,15 @@ export async function POST(req: Request) {
     typeof body.variation === "number" && Number.isFinite(body.variation)
       ? Math.max(0, Math.floor(body.variation))
       : 0;
+  // Only forward the reference if it is an https URL on a kie.ai host.
+  const reference = isAllowedReference(body.reference) ? body.reference : undefined;
 
   try {
     // Stage 3a: write (or fall back to a templated prompt).
     if (action === "write") {
       let prompt: string;
       try {
-        prompt = await writeRoomPrompt({ cropDataUrl: room, brief, roomType });
+        prompt = await writeRoomPrompt({ cropDataUrl: room, brief, roomType, overviewUrl: reference });
       } catch {
         // Degrade gracefully so the user can still render.
         prompt = fallbackRoomPrompt(brief, roomType);
@@ -77,9 +82,10 @@ export async function POST(req: Request) {
     // Stage 3b: render from a provided prompt.
     if (action === "render") {
       const interior = (body.prompt ?? "").trim() || fallbackRoomPrompt(brief, roomType);
+      const inputs = reference ? [room, reference] : [room];
       const { imageUrl } = await generateImage(
-        roomRenderPrompt(interior, variation, brief),
-        [room],
+        roomRenderPrompt(interior, variation, brief, Boolean(reference)),
+        inputs,
         "room.png",
       );
       const payload: GenerateImageResponse = { image: imageUrl, mimeType: "image/png" };
@@ -89,13 +95,14 @@ export async function POST(req: Request) {
     // action === "auto": write then render in one call.
     let interior: string;
     try {
-      interior = await writeRoomPrompt({ cropDataUrl: room, brief, roomType });
+      interior = await writeRoomPrompt({ cropDataUrl: room, brief, roomType, overviewUrl: reference });
     } catch {
       interior = fallbackRoomPrompt(brief, roomType);
     }
+    const inputs = reference ? [room, reference] : [room];
     const { imageUrl } = await generateImage(
-      roomRenderPrompt(interior, variation, brief),
-      [room],
+      roomRenderPrompt(interior, variation, brief, Boolean(reference)),
+      inputs,
       "room.png",
     );
     const payload: GenerateImageResponse & RoomPromptResponse = {

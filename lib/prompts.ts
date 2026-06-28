@@ -51,17 +51,26 @@ export function overviewPrompt(brief: DesignBrief): string {
 export function promptWriterSystem(
   brief: DesignBrief,
   roomType: RoomType,
+  hasOverview = false,
 ): string {
   const style = resolveStyleDescriptor(brief);
   const roomHint =
     roomType && roomType !== "auto"
       ? `The room is a ${roomType}.`
       : "First infer the room type from the layout.";
+  const overviewHint = hasOverview
+    ? [
+        "A second image shows a 3D axonometric overview of the WHOLE home; use it",
+        "to keep the room's architecture, materials and palette consistent with",
+        "the rest of the home (do not describe the other rooms).",
+      ].join(" ")
+    : "";
   return [
     "You are an expert architectural-visualization prompt writer specializing in",
     "high-end interior renders.",
     "You will be given a cropped region of a 2D floor plan containing a single room.",
     roomHint,
+    overviewHint,
     "Write ONE single-paragraph, richly detailed prompt for a PHOTOREALISTIC",
     "interior render of that room, captured from a natural EYE-LEVEL perspective",
     "as if standing in an open doorway looking into the space.",
@@ -71,7 +80,9 @@ export function promptWriterSystem(
     `Respect this style throughout: ${style}.`,
     `Lighting: ${brief.lighting}.`,
     "Output ONLY the prompt text — no preamble, no headings, no quotes, no lists.",
-  ].join(" ");
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 /**
@@ -88,18 +99,31 @@ export function roomRenderPrompt(
   interiorPrompt: string,
   variation: number,
   brief: DesignBrief,
+  hasOverviewRef = false,
 ): string {
   const style = resolveStyleDescriptor(brief);
+  const overviewClause = hasOverviewRef
+    ? [
+        "A SECOND reference image is a 3D axonometric overview of the whole home;",
+        "use it ONLY for architectural style, materials and palette consistency.",
+        "Do NOT adopt its top-down / parallel-projection camera — the output must",
+        "stay an eye-level photograph.",
+      ].join(" ")
+    : "";
   const base = [
     interiorPrompt.trim(),
     `Overall style: ${style}. Lighting: ${brief.lighting}.`,
-    "IMPORTANT: the attached image is a 2D top-down architectural floor-plan crop,",
-    "provided ONLY as a layout reference for the room's shape and the positions of",
-    "walls, doors and windows. Do NOT copy its lines, colours, labels or top-down",
-    "viewpoint. Produce a photorealistic, ground-level EYE-LEVEL photograph of the",
-    "finished, furnished interior — realistic materials and lighting, high detail.",
+    "IMPORTANT: the first attached image is a 2D top-down architectural floor-plan",
+    "crop, provided ONLY as a layout reference for the room's shape and the",
+    "positions of walls, doors and windows. Do NOT copy its lines, colours, labels",
+    "or top-down viewpoint.",
+    overviewClause,
+    "Produce a photorealistic, ground-level EYE-LEVEL photograph of the finished,",
+    "furnished interior — realistic materials and lighting, high detail.",
     "No text, no watermark, no dimensions, no floor-plan lines.",
-  ].join(" ");
+  ]
+    .filter(Boolean)
+    .join(" ");
   if (variation <= 0) return base;
   return [
     base,

@@ -134,8 +134,20 @@ export async function writeRoomPromptBrowser(args: {
   brief: DesignBrief;
   roomType: RoomType;
   apiKey: string;
+  /** Optional hosted overview URL for whole-home style consistency. */
+  overviewUrl?: string;
 }): Promise<string> {
   const imageUrl = await uploadBase64(args.cropDataUrl, args.apiKey, "room.png");
+  const hasOverview = Boolean(args.overviewUrl);
+  const userContent: Array<
+    { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }
+  > = [
+    { type: "text", text: "Write the photorealistic interior prompt for this room." },
+    { type: "image_url", image_url: { url: imageUrl } },
+  ];
+  if (args.overviewUrl) {
+    userContent.push({ type: "image_url", image_url: { url: args.overviewUrl } });
+  }
   const res = await fetch(`https://api.kie.ai/${chatModel()}/v1/chat/completions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${args.apiKey}`, "Content-Type": "application/json" },
@@ -143,14 +155,8 @@ export async function writeRoomPromptBrowser(args: {
       model: chatModel(),
       stream: false,
       messages: [
-        { role: "system", content: promptWriterSystem(args.brief, args.roomType) },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "Write the photorealistic interior prompt for this room." },
-            { type: "image_url", image_url: { url: imageUrl } },
-          ],
-        },
+        { role: "system", content: promptWriterSystem(args.brief, args.roomType, hasOverview) },
+        { role: "user", content: userContent },
       ],
     }),
   });

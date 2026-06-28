@@ -31,10 +31,23 @@ export async function writeRoomPrompt(args: {
   cropDataUrl: string;
   brief: DesignBrief;
   roomType: RoomType;
+  /** Optional hosted overview URL for whole-home style consistency. */
+  overviewUrl?: string;
 }): Promise<string> {
   const key = requireApiKey();
   const imageUrl = await uploadBase64(args.cropDataUrl, "room.png");
-  const system = promptWriterSystem(args.brief, args.roomType);
+  const hasOverview = Boolean(args.overviewUrl);
+  const system = promptWriterSystem(args.brief, args.roomType, hasOverview);
+
+  const userContent: Array<
+    { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }
+  > = [
+    { type: "text", text: "Write the photorealistic interior prompt for this room." },
+    { type: "image_url", image_url: { url: imageUrl } },
+  ];
+  if (args.overviewUrl) {
+    userContent.push({ type: "image_url", image_url: { url: args.overviewUrl } });
+  }
 
   let res: Response;
   try {
@@ -49,16 +62,7 @@ export async function writeRoomPrompt(args: {
         stream: false,
         messages: [
           { role: "system", content: system },
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: "Write the photorealistic interior prompt for this room.",
-              },
-              { type: "image_url", image_url: { url: imageUrl } },
-            ],
-          },
+          { role: "user", content: userContent },
         ],
       }),
     });
