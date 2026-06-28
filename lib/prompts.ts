@@ -52,6 +52,7 @@ export function promptWriterSystem(
   brief: DesignBrief,
   roomType: RoomType,
   hasOverview = false,
+  hasLayout = false,
 ): string {
   const style = resolveStyleDescriptor(brief);
   const roomHint =
@@ -65,6 +66,15 @@ export function promptWriterSystem(
         "the rest of the home (do not describe the other rooms).",
       ].join(" ")
     : "";
+  const layoutHint = hasLayout
+    ? [
+        "You are also given a DETECTED SPATIAL LAYOUT produced by automated object",
+        "detection on this room. Treat it as ground truth for which items exist,",
+        "their counts, and their positions: reproduce exactly those items and",
+        "placements at eye level, and do not add, remove, or relocate anything.",
+        "Where the crop and the detected layout disagree, prefer the detected layout.",
+      ].join(" ")
+    : "";
   return [
     "You are an expert architectural-visualization prompt writer specializing in",
     "high-end interior renders.",
@@ -72,6 +82,7 @@ export function promptWriterSystem(
     "above. Analyze it and reconstruct it as a PHOTOREALISTIC eye-level interior.",
     roomHint,
     overviewHint,
+    layoutHint,
     "Write ONE single-paragraph, richly detailed prompt for a photorealistic",
     "architectural INTERIOR render of that room, captured from a natural EYE-LEVEL",
     "perspective, as if standing near the room's doorway/entry looking into the",
