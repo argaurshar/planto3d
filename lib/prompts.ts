@@ -1,53 +1,128 @@
-// Prompt templates — the "geometry" of planto3d lives here.
+// Prompt templates — the "geometry" and the interior-design intent of planto3d
+// live here.
 //
-// Both prompts ask for a true *axonometric* (parallel) projection rather than a
-// perspective render, so straight walls stay straight and the result reads like
-// a clean 3D map rather than a photo.
+// Two render styles:
+//  - the OVERVIEW is a true axonometric (parallel) top-view of the whole plan;
+//  - each ROOM is a photorealistic, eye-level interior render.
+//
+// Stage 3 is two-step: a vision LLM first writes a detailed interior prompt
+// (Stage 3a, `promptWriterSystem`), then the image model renders it
+// (Stage 3b, `roomRenderPrompt`).
+
+import type { DesignBrief, RoomType } from "./types";
+import { resolveStyleDescriptor } from "./styles";
 
 const AXONOMETRIC_RULES = [
   "Use a true axonometric / isometric projection (parallel projection, like an",
   "orthographic camera): NO perspective foreshortening, all parallel edges stay",
   "parallel, roughly 30-degree axes. Extrude the walls to a consistent height.",
-  "Clean, consistent, soft lighting from one direction. Neutral architectural",
-  "model look. Keep proportions, wall positions, doors and windows faithful to",
-  "the source plan.",
+  "Clean, consistent, soft lighting. Keep proportions, wall positions, doors and",
+  "windows faithful to the source plan.",
 ].join(" ");
 
-/** Whole-plan overview prompt: 2D plan -> axonometric map of the entire layout. */
-export function overviewPrompt(): string {
+function metaPhrase(brief: DesignBrief): string {
+  const parts: string[] = [];
+  if (brief.dwelling) parts.push(brief.dwelling);
+  if (brief.beds) parts.push(`${brief.beds}-bed`);
+  if (brief.baths) parts.push(`${brief.baths}-bath`);
+  if (brief.areaSqm) parts.push(`${brief.areaSqm}sqm`);
+  return parts.length ? ` of a ${parts.join(" ")} home` : "";
+}
+
+/** Stage 1: whole-plan 2D plan -> axonometric overview map of the layout. */
+export function overviewPrompt(brief: DesignBrief): string {
+  const style = resolveStyleDescriptor(brief);
   return [
     "This image is a 2D architectural floor plan.",
-    "Generate a 3D axonometric overview map of the WHOLE plan, showing every",
-    "room and its walls as a single cohesive model viewed from above at an",
-    "angle.",
+    `Using it as a guide for depth and spatial layout, generate a full overhead`,
+    `3D axonometric (isometric) overview render${metaPhrase(brief)}, showing every`,
+    "room and its walls as a single cohesive model viewed from above at an angle.",
     AXONOMETRIC_RULES,
+    `Lighting: ${brief.lighting}.`,
+    `STYLE: ${style}.`,
     "Do not add a background, text labels, dimensions, or annotations.",
   ].join(" ");
 }
 
 /**
- * Single-room prompt. `variation` (0 for the first generation, then incremented
- * by Regenerate) nudges the model to produce a genuinely different take while
- * keeping the same room.
+ * Stage 3a system instruction for the vision LLM. It receives the cropped room
+ * image and returns ONE detailed photorealistic interior prompt.
  */
-export function roomPrompt(variation: number): string {
-  const base = [
-    "This image is a cropped region of a 2D floor plan containing a single room.",
-    "Generate a detailed 3D axonometric cutaway of THAT room: extruded walls,",
-    "floor, doorways and windows where the plan shows them, plus plausible",
-    "furniture appropriate to the room type.",
-    AXONOMETRIC_RULES,
-    "Open or cut away the near walls so the interior is visible. No background,",
-    "no text, no dimensions.",
+export function promptWriterSystem(
+  brief: DesignBrief,
+  roomType: RoomType,
+): string {
+  const style = resolveStyleDescriptor(brief);
+  const roomHint =
+    roomType && roomType !== "auto"
+      ? `The room is a ${roomType}.`
+      : "First infer the room type from the layout.";
+  return [
+    "You are an expert architectural-visualization prompt writer specializing in",
+    "high-end interior renders.",
+    "You will be given a cropped region of a 2D floor plan containing a single room.",
+    roomHint,
+    "Write ONE single-paragraph, richly detailed prompt for a PHOTOREALISTIC",
+    "interior render of that room, captured from a natural EYE-LEVEL perspective",
+    "as if standing in an open doorway looking into the space.",
+    "Describe: the room type, camera viewpoint, wall/floor/ceiling materials,",
+    "the main furniture and fixtures and their placement (faithful to the plan's",
+    "layout, doors and windows), textiles, decor, and the lighting and mood.",
+    `Respect this style throughout: ${style}.`,
+    `Lighting: ${brief.lighting}.`,
+    "Output ONLY the prompt text — no preamble, no headings, no quotes, no lists.",
   ].join(" ");
+}
 
+/**
+ * Stage 3b: wrap the (LLM-written or user-edited) interior prompt with render
+ * constraints. The `brief` is re-injected here so style/lighting anchor every
+ * render even if the user edited it out of the prompt text. `variation`
+ * (incremented by Regenerate) nudges a different take.
+ *
+ * The attached image is the 2D plan crop — explicitly framed as a top-down
+ * LAYOUT reference only, so the model produces an eye-level photo rather than
+ * copying the plan's lines or viewpoint.
+ */
+export function roomRenderPrompt(
+  interiorPrompt: string,
+  variation: number,
+  brief: DesignBrief,
+): string {
+  const style = resolveStyleDescriptor(brief);
+  const base = [
+    interiorPrompt.trim(),
+    `Overall style: ${style}. Lighting: ${brief.lighting}.`,
+    "IMPORTANT: the attached image is a 2D top-down architectural floor-plan crop,",
+    "provided ONLY as a layout reference for the room's shape and the positions of",
+    "walls, doors and windows. Do NOT copy its lines, colours, labels or top-down",
+    "viewpoint. Produce a photorealistic, ground-level EYE-LEVEL photograph of the",
+    "finished, furnished interior — realistic materials and lighting, high detail.",
+    "No text, no watermark, no dimensions, no floor-plan lines.",
+  ].join(" ");
   if (variation <= 0) return base;
-
-  // Vary furnishing/styling on each regenerate without changing the structure.
   return [
     base,
-    `Variation #${variation}: produce a clearly different interpretation from`,
-    "previous attempts — alternate furniture layout, styling and materials,",
-    "while keeping the same walls, doors and windows.",
+    `Variation #${variation}: offer a clearly different take — alternate camera`,
+    "angle, furniture arrangement and styling — while keeping the same room",
+    "type, walls, doors and windows.",
+  ].join(" ");
+}
+
+/**
+ * Fallback Stage 3a prompt used when the LLM prompt-writer is unavailable, so
+ * the user can still render. Templated from the brief + room type.
+ */
+export function fallbackRoomPrompt(
+  brief: DesignBrief,
+  roomType: RoomType,
+): string {
+  const style = resolveStyleDescriptor(brief);
+  const room = roomType && roomType !== "auto" ? roomType : "room";
+  return [
+    `Photorealistic eye-level interior render of a ${room}, based on this cropped`,
+    "floor-plan region. Faithful to the plan's layout, doors and windows, with",
+    "plausible furniture and fixtures for the room type.",
+    `STYLE: ${style}. Lighting: ${brief.lighting}.`,
   ].join(" ");
 }

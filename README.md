@@ -1,8 +1,8 @@
 # planto3d
 
 Turn a **2D floor plan** into AI-generated **3D axonometric** views, room by
-room, with you in the loop. Powered by **Nano Banana Pro** (Google's Gemini 3
-Pro Image model).
+room, with you in the loop. Powered by **Nano Banana 2** (the `nano-banana-2`
+model on [kie.ai](https://kie.ai)).
 
 ## How it works
 
@@ -14,15 +14,26 @@ Pro Image model).
    back through them.
 6. Pick another room and repeat.
 
-All image generation runs through the Gemini API **server-side**; your API key
-never reaches the browser.
+All image generation runs through kie.ai **server-side**; your API key never
+reaches the browser.
 
 ## Tech stack
 
 - **Next.js** (App Router) + **React** + **TypeScript**
 - **Tailwind CSS** for styling
-- **`@google/genai`** SDK calling model `gemini-3-pro-image-preview`
+- **kie.ai** job API, model `nano-banana-2`
 - Two server route handlers: `app/api/overview` and `app/api/room`
+
+## How the kie.ai integration works
+
+kie.ai is an asynchronous job API, so each generation does three things
+server-side (see `lib/kie.ts`):
+
+1. **Upload** the (client-cropped) base64 image to kie.ai's base64 upload
+   endpoint, which returns a temporary hosted URL.
+2. **Create a task** (`createTask`) with the prompt + image URL → `taskId`.
+3. **Poll** `recordInfo` until the task succeeds, then return the result image
+   URL, which the UI renders directly.
 
 ## Setup
 
@@ -31,9 +42,8 @@ npm install
 cp .env.local.example .env.local   # then add your key
 ```
 
-Set `GEMINI_API_KEY` in `.env.local` to a Google Gemini API key that has access
-to Nano Banana Pro (`gemini-3-pro-image-preview`). Get one at
-<https://aistudio.google.com/apikey>.
+Set `KIE_API_KEY` in `.env.local` to your kie.ai API key (with access to
+`nano-banana-2`). Get / manage it at <https://kie.ai/api-key>.
 
 ## Run
 
@@ -56,17 +66,20 @@ app/
     overview/route.ts # POST plan image  → axonometric overview
     room/route.ts     # POST room crop   → 3D room render
 lib/
-  gemini.ts           # server-only GenAI client + generateImage()
+  kie.ts              # server-only kie.ai client: upload + createTask + poll
   prompts.ts          # axonometric overview + per-room prompts
   crop.ts             # client-side rectangle crop of the plan
   api.ts              # client fetch helpers
-  image.ts            # data URL <-> inline image helpers
+  image.ts            # data URL validation helper
   types.ts            # shared types
 ```
 
 ## Notes
 
-- Live generation requires a valid (paid) Gemini key with Nano Banana Pro
-  access. Without it the UI still runs, but generation calls return an auth
-  error shown in the UI.
-- Override the model with `GEMINI_IMAGE_MODEL` in `.env.local` if needed.
+- Live generation requires a kie.ai key with credit and `nano-banana-2` access.
+  Without it the UI still runs, but generation calls return an error shown in
+  the UI.
+- Output resolution defaults to `1K`; override with `KIE_IMAGE_RESOLUTION`
+  (`1K` | `2K` | `4K`) or the model with `KIE_IMAGE_MODEL` in `.env.local`.
+- kie.ai-hosted uploads and results are temporary (deleted after a few days);
+  the app treats results as ephemeral image URLs.

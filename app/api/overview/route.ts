@@ -1,17 +1,19 @@
 import { NextResponse } from "next/server";
 
-import { generateImage, GeminiError } from "@/lib/gemini";
-import { dataUrlToInline, inlineToDataUrl } from "@/lib/image";
+import { generateImage, KieError } from "@/lib/kie";
+import { dataUrlToInline } from "@/lib/image";
 import { overviewPrompt } from "@/lib/prompts";
-import type { GenerateImageResponse } from "@/lib/types";
+import { DEFAULT_BRIEF } from "@/lib/styles";
+import type { DesignBrief, GenerateImageResponse } from "@/lib/types";
 
-// Image generation can take a while; allow a generous timeout.
+// Image generation is async at kie.ai (create + poll); allow a generous timeout.
 export const maxDuration = 120;
 
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // ~10MB of base64
+// Cap on the base64 data-URL *string* length (~10MB of characters ≈ ~7MB image).
+const MAX_DATA_URL_CHARS = 10 * 1024 * 1024;
 
 export async function POST(req: Request) {
-  let body: { plan?: string };
+  let body: { plan?: string; brief?: DesignBrief };
   try {
     body = await req.json();
   } catch {
@@ -25,30 +27,31 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-  if (plan.length > MAX_IMAGE_BYTES) {
+  if (plan.length > MAX_DATA_URL_CHARS) {
     return NextResponse.json(
-      { error: "Plan image is too large (max ~7MB)." },
+      { error: "Plan image is too large (max ~7MB image)." },
       { status: 413 },
     );
   }
 
-  const inline = dataUrlToInline(plan);
-  if (!inline) {
+  if (!dataUrlToInline(plan)) {
     return NextResponse.json(
       { error: "`plan` must be a base64 image data URL." },
       { status: 400 },
     );
   }
 
+  const brief: DesignBrief = { ...DEFAULT_BRIEF, ...(body.brief ?? {}) };
+
   try {
-    const result = await generateImage(overviewPrompt(), [inline]);
+    const { imageUrl } = await generateImage(overviewPrompt(brief), [plan], "plan.png");
     const payload: GenerateImageResponse = {
-      image: inlineToDataUrl(result),
-      mimeType: result.mimeType,
+      image: imageUrl,
+      mimeType: "image/png",
     };
     return NextResponse.json(payload);
   } catch (err) {
-    const status = err instanceof GeminiError ? err.status : 500;
+    const status = err instanceof KieError ? err.status : 500;
     const message = err instanceof Error ? err.message : "Unknown error.";
     return NextResponse.json({ error: message }, { status });
   }

@@ -2,10 +2,13 @@
 
 import { useRef, useState } from "react";
 import { normalizeRect, type Rect } from "@/lib/crop";
+import { ROOM_TYPES, type RoomType } from "@/lib/types";
 
 interface Props {
   planDataUrl: string;
   loading: boolean;
+  roomType: RoomType;
+  onRoomTypeChange: (value: RoomType) => void;
   onSelect: (rect: Rect) => void;
   onBack: () => void;
 }
@@ -22,6 +25,8 @@ interface Point {
 export default function RoomSelector({
   planDataUrl,
   loading,
+  roomType,
+  onRoomTypeChange,
   onSelect,
   onBack,
 }: Props) {
@@ -84,9 +89,26 @@ export default function RoomSelector({
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-neutral-300">
-        Which room? Drag a box around a room on the plan to build it in 3D.
-      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="text-sm text-neutral-300">
+          Which room? Drag a box around a room on the plan to build it in 3D.
+        </p>
+        <label className="ml-auto flex items-center gap-2 text-xs text-neutral-400">
+          Room type
+          <select
+            className="rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100 outline-none focus:border-emerald-500 disabled:opacity-50"
+            value={roomType}
+            disabled={loading}
+            onChange={(e) => onRoomTypeChange(e.target.value as RoomType)}
+          >
+            {ROOM_TYPES.map((r) => (
+              <option key={r.value} value={r.value}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
 
       <div className="relative inline-block max-w-full select-none">
         {/* eslint-disable-next-line @next/next/no-img-element */}

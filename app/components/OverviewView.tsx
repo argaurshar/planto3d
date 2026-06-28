@@ -1,25 +1,34 @@
 "use client";
 
+import type { DesignBrief as Brief } from "@/lib/types";
+import DesignBrief from "./DesignBrief";
+
 interface Props {
   planDataUrl: string;
   overviewDataUrl: string | null;
+  brief: Brief;
   loading: boolean;
+  onBriefChange: (patch: Partial<Brief>) => void;
   onGenerate: () => void;
-  onProceed: () => void;
+  onApprove: () => void;
   onReset: () => void;
 }
 
-/** Step 2/3: show the plan, generate the axonometric overview, then Proceed. */
+/** Step 2/3: set the brief, generate the axonometric overview, then Approve. */
 export default function OverviewView({
   planDataUrl,
   overviewDataUrl,
+  brief,
   loading,
+  onBriefChange,
   onGenerate,
-  onProceed,
+  onApprove,
   onReset,
 }: Props) {
   return (
     <div className="space-y-6">
+      <DesignBrief brief={brief} disabled={loading} onChange={onBriefChange} />
+
       <div className="grid gap-6 md:grid-cols-2">
         <figure className="space-y-2">
           <figcaption className="text-xs uppercase tracking-wide text-neutral-500">
@@ -72,11 +81,11 @@ export default function OverviewView({
 
         <button
           type="button"
-          onClick={onProceed}
+          onClick={onApprove}
           disabled={!overviewDataUrl || loading}
           className="rounded-lg border border-emerald-500 px-4 py-2 text-sm font-medium text-emerald-400 transition hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Proceed → pick a room
+          Approve → pick a room
         </button>
 
         <button

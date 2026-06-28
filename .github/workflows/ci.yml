@@ -30,4 +30,4 @@ jobs:
         run: npm run build
         env:
           # Build must succeed without a real key; generation is runtime-only.
-          GEMINI_API_KEY: ""
+          KIE_API_KEY: ""

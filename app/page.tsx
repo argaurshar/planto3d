@@ -8,8 +8,9 @@ export default function Home() {
           planto<span className="text-emerald-400">3d</span>
         </h1>
         <p className="text-sm text-neutral-400">
-          Upload a 2D floor plan, generate an axonometric overview, then build
-          any room in 3D — one room at a time, regenerate until you like it.
+          Upload a 2D floor plan, set a style, generate an axonometric overview,
+          then turn any room into a photorealistic interior — the prompt is
+          auto-written and fully editable, regenerate until you like it.
         </p>
       </header>
       <PlanToThreeD />

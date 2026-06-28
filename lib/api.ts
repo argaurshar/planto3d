@@ -1,9 +1,11 @@
-import type { GenerateImageResponse } from "./types";
+import type {
+  DesignBrief,
+  GenerateImageResponse,
+  RoomPromptResponse,
+  RoomType,
+} from "./types";
 
-async function postImage(
-  url: string,
-  body: Record<string, unknown>,
-): Promise<string> {
+async function postJson<T>(url: string, body: Record<string, unknown>): Promise<T> {
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -19,19 +21,47 @@ async function postImage(
     }
     throw new Error(message);
   }
-  const data = (await res.json()) as GenerateImageResponse;
+  return (await res.json()) as T;
+}
+
+/** Stage 1: generate the whole-plan axonometric overview. Returns an image URL. */
+export async function requestOverview(
+  planDataUrl: string,
+  brief: DesignBrief,
+): Promise<string> {
+  const data = await postJson<GenerateImageResponse>("/api/overview", {
+    plan: planDataUrl,
+    brief,
+  });
   return data.image;
 }
 
-/** Generate the whole-plan axonometric overview. Returns an image data URL. */
-export function requestOverview(planDataUrl: string): Promise<string> {
-  return postImage("/api/overview", { plan: planDataUrl });
+/** Stage 3a: auto-write the interior prompt for a cropped room. */
+export async function requestRoomPrompt(
+  roomDataUrl: string,
+  brief: DesignBrief,
+  roomType: RoomType,
+): Promise<string> {
+  const data = await postJson<RoomPromptResponse>("/api/room", {
+    action: "write",
+    room: roomDataUrl,
+    brief,
+    roomType,
+  });
+  return data.prompt;
 }
 
-/** Generate a 3D render of a single cropped room. Returns an image data URL. */
-export function requestRoom(
+/** Stage 3b: render a photorealistic interior from a (possibly edited) prompt. */
+export async function requestRoomRender(
   roomDataUrl: string,
+  prompt: string,
   variation: number,
 ): Promise<string> {
-  return postImage("/api/room", { room: roomDataUrl, variation });
+  const data = await postJson<GenerateImageResponse>("/api/room", {
+    action: "render",
+    room: roomDataUrl,
+    prompt,
+    variation,
+  });
+  return data.image;
 }
