@@ -13,9 +13,9 @@ Guidance for AI assistants (and humans) working in the **planto3d** repository.
 user is in the loop at every step: upload a plan, generate an overview, proceed,
 pick a room by drawing a box, and regenerate any 3D result they don't like.
 
-All image generation is done by **Nano Banana Pro** — Google's **Gemini 3 Pro
-Image** model (`gemini-3-pro-image-preview`), called via the `@google/genai`
-SDK. There is **no procedural geometry**; the 3D views are AI-generated images.
+All image generation is done by **Nano Banana 2** — the `nano-banana-2` model on
+**[kie.ai](https://kie.ai)**, called via kie.ai's asynchronous job API. There is
+**no procedural geometry**; the 3D views are AI-generated images.
 
 ## Interaction flow
 
@@ -23,7 +23,7 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
 `useReducer` state machine with steps `upload → overview → select → room`):
 
 1. **Upload** a 2D plan image (`components/PlanUploader.tsx`).
-2. **Generate overview** — POST the plan to `/api/overview`; Nano Banana Pro
+2. **Generate overview** — POST the plan to `/api/overview`; Nano Banana 2
    returns an axonometric overview of the whole plan (`components/OverviewView.tsx`).
 3. **Proceed** → enter room-selection mode.
 4. **Draw a box** around a room on the plan (`components/RoomSelector.tsx`); the
@@ -42,10 +42,25 @@ and regeneration as a first-class action that preserves the selected room.
 
 - **Next.js** (App Router) + **React 19** + **TypeScript** (strict).
 - **Tailwind CSS** for styling.
-- **`@google/genai`** SDK, server-side only, model `gemini-3-pro-image-preview`.
-- The Gemini API key (`GEMINI_API_KEY`) is read **only** in server code
-  (`lib/gemini.ts`, which imports `server-only`); it is never bundled into the
-  client. Override the model with `GEMINI_IMAGE_MODEL`.
+- **kie.ai** job API, server-side only, model `nano-banana-2`.
+- The kie.ai API key (`KIE_API_KEY`) is read **only** in server code
+  (`lib/kie.ts`, which imports `server-only`); it is never bundled into the
+  client. Override the model with `KIE_IMAGE_MODEL` and resolution with
+  `KIE_IMAGE_RESOLUTION` (`1K`|`2K`|`4K`, default `1K`).
+
+### kie.ai job flow (in `lib/kie.ts`)
+
+kie.ai is asynchronous and `image_input` requires hosted **URLs**, not base64,
+so each generation does three steps server-side:
+1. `uploadBase64` — POST the client's base64 crop to
+   `https://kieai.redpandaai.co/api/file-base64-upload` → temporary `downloadUrl`.
+2. `createTask` — POST `{ model, input: { prompt, image_input:[url], ... } }` to
+   `https://api.kie.ai/api/v1/jobs/createTask` → `taskId`.
+3. `pollTask` — GET `https://api.kie.ai/api/v1/jobs/recordInfo?taskId=...` until
+   `state:success`, then read `resultJson.resultUrls[0]`.
+
+The routes return `{ image, mimeType }` where **`image` is a remote URL** the UI
+drops straight into `<img src>`.
 
 ## Project structure
 
@@ -64,11 +79,11 @@ app/
     overview/route.ts   # POST { plan }            → { image, mimeType }
     room/route.ts        # POST { room, variation } → { image, mimeType }
 lib/
-  gemini.ts             # server-only GenAI client + generateImage(prompt, images[])
+  kie.ts                # server-only kie.ai client (upload + createTask + poll)
   prompts.ts            # axonometric overview + per-room prompt templates
   crop.ts               # rect math + crop a region of the plan → PNG data URL
   api.ts                # client fetch helpers (requestOverview/requestRoom)
-  image.ts              # data URL <-> { data, mimeType } helpers
+  image.ts              # data URL validation helper (dataUrlToInline)
   types.ts              # shared types
 ```
 
@@ -77,8 +92,9 @@ lib/
   parallel (axonometric/isometric) projection — no perspective foreshortening.
   The room prompt varies furnishing/styling by `variation` so Regenerate
   produces a genuinely different take while keeping the same walls.
-- **Model call + error handling:** `lib/gemini.ts` (`generateImage`,
-  `GeminiError` with an HTTP status). Routes map errors to clean JSON responses.
+- **Model call + error handling:** `lib/kie.ts` (`generateImage`,
+  `KieError` with an HTTP status; maps kie.ai codes 401/402/429 etc.). Routes
+  map errors to clean JSON responses.
 - **Selection → crop:** `RoomSelector.tsx` reports a rect in natural pixels;
   `lib/crop.ts` does the full-resolution crop on a `<canvas>`.
 
@@ -86,7 +102,7 @@ lib/
 
 ```bash
 npm install
-cp .env.local.example .env.local   # set GEMINI_API_KEY
+cp .env.local.example .env.local   # set KIE_API_KEY
 npm run dev        # http://localhost:3000
 npm run build      # production build (also runs lint + typecheck)
 npm run start      # serve the production build
@@ -94,9 +110,8 @@ npm run lint       # eslint (next lint)
 npm run typecheck  # tsc --noEmit
 ```
 
-Live generation needs a valid (paid) Gemini key with Nano Banana Pro access.
-Without it the UI runs but generation calls return an auth error surfaced in
-the UI.
+Live generation needs a kie.ai key with credit and `nano-banana-2` access.
+Without it the UI runs but generation calls return an error surfaced in the UI.
 
 ## Conventions
 
@@ -104,7 +119,7 @@ the UI.
 - Server-only modules import `"server-only"` and read secrets from `process.env`.
 - API routes validate input (image present, size cap) and return
   `{ image, mimeType }` on success or `{ error }` with a proper status.
-- Keep the Gemini key server-side: never import `lib/gemini.ts` into a client
+- Keep the kie.ai key server-side: never import `lib/kie.ts` into a client
   component (`"use client"` files).
 
 ## Git workflow
@@ -119,8 +134,9 @@ the UI.
 - **Projection default** — currently the prompt allows isometric-ish
   axonometric; pin an exact angle if consistency matters.
 - **Persistence/history** across sessions (currently in-memory React state).
-- **Multi-image consistency** — Nano Banana Pro supports several input images;
-  could feed the overview + crop together for more faithful rooms.
+- **Multi-image consistency** — `nano-banana-2` accepts up to 14 input images
+  (`image_input`); could feed the overview + crop together for more faithful
+  rooms (`generateImage` already takes an array of inputs).
 
 ## Notes for AI assistants
 

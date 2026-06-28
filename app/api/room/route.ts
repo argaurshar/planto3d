@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { generateImage, GeminiError } from "@/lib/gemini";
-import { dataUrlToInline, inlineToDataUrl } from "@/lib/image";
+import { generateImage, KieError } from "@/lib/kie";
+import { dataUrlToInline } from "@/lib/image";
 import { roomPrompt } from "@/lib/prompts";
 import type { GenerateImageResponse } from "@/lib/types";
 
@@ -31,8 +31,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const inline = dataUrlToInline(room);
-  if (!inline) {
+  if (!dataUrlToInline(room)) {
     return NextResponse.json(
       { error: "`room` must be a base64 image data URL." },
       { status: 400 },
@@ -45,14 +44,14 @@ export async function POST(req: Request) {
       : 0;
 
   try {
-    const result = await generateImage(roomPrompt(variation), [inline]);
+    const { imageUrl } = await generateImage(roomPrompt(variation), [room], "room.png");
     const payload: GenerateImageResponse = {
-      image: inlineToDataUrl(result),
-      mimeType: result.mimeType,
+      image: imageUrl,
+      mimeType: "image/png",
     };
     return NextResponse.json(payload);
   } catch (err) {
-    const status = err instanceof GeminiError ? err.status : 500;
+    const status = err instanceof KieError ? err.status : 500;
     const message = err instanceof Error ? err.message : "Unknown error.";
     return NextResponse.json({ error: message }, { status });
   }

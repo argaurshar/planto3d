@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 
-import { generateImage, GeminiError } from "@/lib/gemini";
-import { dataUrlToInline, inlineToDataUrl } from "@/lib/image";
+import { generateImage, KieError } from "@/lib/kie";
+import { dataUrlToInline } from "@/lib/image";
 import { overviewPrompt } from "@/lib/prompts";
 import type { GenerateImageResponse } from "@/lib/types";
 
-// Image generation can take a while; allow a generous timeout.
+// Image generation is async at kie.ai (create + poll); allow a generous timeout.
 export const maxDuration = 120;
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // ~10MB of base64
@@ -32,8 +32,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const inline = dataUrlToInline(plan);
-  if (!inline) {
+  if (!dataUrlToInline(plan)) {
     return NextResponse.json(
       { error: "`plan` must be a base64 image data URL." },
       { status: 400 },
@@ -41,14 +40,14 @@ export async function POST(req: Request) {
   }
 
   try {
-    const result = await generateImage(overviewPrompt(), [inline]);
+    const { imageUrl } = await generateImage(overviewPrompt(), [plan], "plan.png");
     const payload: GenerateImageResponse = {
-      image: inlineToDataUrl(result),
-      mimeType: result.mimeType,
+      image: imageUrl,
+      mimeType: "image/png",
     };
     return NextResponse.json(payload);
   } catch (err) {
-    const status = err instanceof GeminiError ? err.status : 500;
+    const status = err instanceof KieError ? err.status : 500;
     const message = err instanceof Error ? err.message : "Unknown error.";
     return NextResponse.json({ error: message }, { status });
   }
