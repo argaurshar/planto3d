@@ -28,8 +28,15 @@ export default function PlanUploader({ onPlanSelected }: Props) {
       <button
         type="button"
         onClick={() => inputRef.current?.click()}
-        className="flex w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-900/50 px-6 py-16 text-center transition hover:border-emerald-500 hover:bg-neutral-900"
+        className="group flex w-full flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-white/15 bg-neutral-900/40 px-6 py-20 text-center transition hover:border-emerald-500/70 hover:bg-neutral-900/70"
       >
+        <span className="flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-white/5 text-emerald-400 transition group-hover:border-emerald-500/40">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="17 8 12 3 7 8" />
+            <line x1="12" y1="3" x2="12" y2="15" />
+          </svg>
+        </span>
         <span className="text-base font-medium">Upload a 2D floor plan</span>
         <span className="text-sm text-neutral-400">
           Click to choose an image (PNG, JPG)

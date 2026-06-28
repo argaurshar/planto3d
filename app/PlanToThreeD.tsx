@@ -4,6 +4,7 @@ import { useReducer, useRef } from "react";
 import PlanUploader from "./components/PlanUploader";
 import OverviewView from "./components/OverviewView";
 import RoomSelector from "./components/RoomSelector";
+import RoomSetup from "./components/RoomSetup";
 import RoomPrompt from "./components/RoomPrompt";
 import RoomResult from "./components/RoomResult";
 import { requestOverview, requestRoomPrompt, requestRoomRender } from "@/lib/api";
@@ -11,7 +12,7 @@ import { cropToDataUrl, type Rect } from "@/lib/crop";
 import { DEFAULT_BRIEF } from "@/lib/styles";
 import type { DesignBrief, RoomType } from "@/lib/types";
 
-type Step = "upload" | "overview" | "select" | "roomPrompt" | "room";
+type Step = "upload" | "overview" | "select" | "roomSetup" | "roomPrompt" | "room";
 type Stage = "idle" | "writing" | "rendering";
 
 interface State {
@@ -21,6 +22,8 @@ interface State {
   overviewDataUrl: string | null;
   cropDataUrl: string | null;
   roomType: RoomType;
+  /** Per-room style override (defaults to the brief's style). */
+  roomStyleId: string;
   roomPrompt: string;
   roomVersions: string[];
   currentVersion: number;
@@ -43,7 +46,9 @@ type Action =
   | { type: "APPROVE" }
   | { type: "GO_OVERVIEW" }
   | { type: "SET_ROOM_TYPE"; value: RoomType }
-  | { type: "BEGIN_ROOM"; dataUrl: string }
+  | { type: "SET_ROOM_STYLE"; styleId: string }
+  | { type: "BEGIN_SETUP"; dataUrl: string }
+  | { type: "START_WRITE" }
   | { type: "PROMPT_DONE"; prompt: string }
   | { type: "REWRITE" }
   | { type: "EDIT_PROMPT"; value: string }
@@ -64,6 +69,7 @@ const initialState: State = {
   overviewDataUrl: null,
   cropDataUrl: null,
   roomType: "auto",
+  roomStyleId: DEFAULT_BRIEF.styleId,
   roomPrompt: "",
   roomVersions: [],
   currentVersion: 0,
@@ -95,18 +101,23 @@ function reducer(state: State, action: Action): State {
       return { ...state, step: "overview", error: null };
     case "SET_ROOM_TYPE":
       return { ...state, roomType: action.value };
-    case "BEGIN_ROOM":
+    case "SET_ROOM_STYLE":
+      return { ...state, roomStyleId: action.styleId };
+    case "BEGIN_SETUP":
       return {
         ...state,
-        step: "roomPrompt",
+        step: "roomSetup",
         cropDataUrl: action.dataUrl,
+        roomStyleId: state.brief.styleId,
         roomPrompt: "",
         roomVersions: [],
         currentVersion: 0,
         variation: 0,
-        stage: "writing",
+        stage: "idle",
         error: null,
       };
+    case "START_WRITE":
+      return { ...state, step: "roomPrompt", stage: "writing", error: null };
     case "PROMPT_DONE":
       return { ...state, stage: "idle", roomPrompt: action.prompt };
     case "REWRITE":
@@ -172,6 +183,12 @@ export default function PlanToThreeD() {
   const nextReq = () => (reqId.current += 1);
   const isStale = (id: number) => reqId.current !== id;
 
+  // The brief used for this room — global brief with the per-room style override.
+  const effectiveBrief = (): DesignBrief => ({
+    ...state.brief,
+    styleId: state.roomStyleId,
+  });
+
   async function generateOverview() {
     if (!state.planDataUrl) return;
     const id = nextReq();
@@ -191,7 +208,7 @@ export default function PlanToThreeD() {
     try {
       const prompt = await requestRoomPrompt(
         crop,
-        state.brief,
+        effectiveBrief(),
         state.roomType,
         state.overviewDataUrl ?? undefined,
       );
@@ -205,7 +222,7 @@ export default function PlanToThreeD() {
     }
   }
 
-  // Crop the selection, move to the prompt step, and auto-write a prompt.
+  // Crop the selection and move to the per-room setup table.
   async function selectRoom(rect: Rect) {
     if (!state.planDataUrl) return;
     const id = nextReq();
@@ -218,8 +235,15 @@ export default function PlanToThreeD() {
       return;
     }
     if (isStale(id)) return;
-    dispatch({ type: "BEGIN_ROOM", dataUrl: crop });
-    await writePrompt(crop, id);
+    dispatch({ type: "BEGIN_SETUP", dataUrl: crop });
+  }
+
+  // After the user picks type/style, write the interior prompt.
+  function confirmSetup() {
+    if (!state.cropDataUrl) return;
+    const id = nextReq();
+    dispatch({ type: "START_WRITE" });
+    void writePrompt(state.cropDataUrl, id);
   }
 
   function rewritePrompt() {
@@ -238,7 +262,7 @@ export default function PlanToThreeD() {
         state.cropDataUrl,
         state.roomPrompt,
         state.variation,
-        state.brief,
+        effectiveBrief(),
         state.useOverviewInRender ? state.overviewDataUrl ?? undefined : undefined,
       );
       if (isStale(id)) return;
@@ -258,7 +282,7 @@ export default function PlanToThreeD() {
         state.cropDataUrl,
         state.roomPrompt,
         state.variation,
-        state.brief,
+        effectiveBrief(),
         state.useOverviewInRender ? state.overviewDataUrl ?? undefined : undefined,
       );
       if (isStale(id)) return;
@@ -312,10 +336,20 @@ export default function PlanToThreeD() {
         <RoomSelector
           planDataUrl={state.planDataUrl}
           loading={state.stage !== "idle"}
-          roomType={state.roomType}
-          onRoomTypeChange={(value) => dispatch({ type: "SET_ROOM_TYPE", value })}
           onSelect={selectRoom}
           onBack={goOverview}
+        />
+      )}
+
+      {state.step === "roomSetup" && (
+        <RoomSetup
+          cropDataUrl={state.cropDataUrl}
+          roomType={state.roomType}
+          styleId={state.roomStyleId}
+          onRoomTypeChange={(value) => dispatch({ type: "SET_ROOM_TYPE", value })}
+          onStyleChange={(styleId) => dispatch({ type: "SET_ROOM_STYLE", styleId })}
+          onGenerate={confirmSetup}
+          onBack={pickAnother}
         />
       )}
 

@@ -29,9 +29,10 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
 3. **Generate overview** — POST `{ plan, brief }` to `/api/overview`; Nano
    Banana 2 returns an **axonometric** top-view of the whole plan
    (`components/OverviewView.tsx`). **Approve** to continue.
-4. **Draw a box** around a room (`components/RoomSelector.tsx`) and pick a room
-   type; the selection is captured in **natural image pixels** and cropped
-   client-side (`lib/crop.ts`).
+4. **Draw a box** around a room (`components/RoomSelector.tsx`); the selection is
+   captured in **natural image pixels** and cropped client-side (`lib/crop.ts`).
+   Then a per-room **setup table** (`components/RoomSetup.tsx`) picks the
+   **interior type + style** (overrides the brief's style for this room only).
 5. **Two-stage room render:**
    - **3a — prompt writer** — `/api/room` `action:"write"` calls a kie.ai vision
      LLM (`lib/kieChat.ts`) to auto-write a **photorealistic interior** prompt,
@@ -108,12 +109,16 @@ app/
   globals.css           # Tailwind entry
   PlanToThreeD.tsx      # client state machine (the whole flow)
   components/
+    ApiKeyBar.tsx       # static build: dismissible user API-key entry
     PlanUploader.tsx    # file → data URL
     DesignBrief.tsx     # style preset + lighting + plan metadata
-    OverviewView.tsx    # brief + plan + overview + Generate/Approve
-    RoomSelector.tsx    # box drawing over the plan + room-type selector
+    OverviewView.tsx    # brief + plan + overview + 2D↔3D CompareSlider + Approve
+    CompareSlider.tsx   # before/after drag slider (2D vs 3D)
+    DownloadButton.tsx  # blob-fetch download for remote images
+    RoomSelector.tsx    # box drawing over the plan
+    RoomSetup.tsx       # per-room interior type + style table
     RoomPrompt.tsx      # editable auto-written interior prompt + Render
-    RoomResult.tsx      # interior render + Regenerate/Edit prompt + history
+    RoomResult.tsx      # interior render + Regenerate/Edit prompt + download + history
   api/
     overview/route.ts   # POST { plan, brief }                  → { image, mimeType }
     room/route.ts        # POST { action, room, brief, prompt… } → { image|prompt }
@@ -122,8 +127,11 @@ lib/
   kieChat.ts            # server-only kie.ai vision-LLM prompt writer (Stage 3a)
   prompts.ts            # overview + prompt-writer system + room render templates
   styles.ts             # interior-design style presets + brief resolution
+  kieBrowser.ts         # static build: browser-side kie.ai client (user key)
   crop.ts               # rect math + crop a region of the plan → PNG data URL
-  api.ts                # client fetch helpers (overview/roomPrompt/roomRender)
+  download.ts           # download a remote/data-URL image (blob + fallback)
+  refs.ts               # isAllowedReference host allowlist for the overview ref
+  api.ts                # client fetch helpers; branches on IS_STATIC
   image.ts              # data URL validation helper (dataUrlToInline)
   types.ts              # shared types (DesignBrief, RoomType, responses)
 ```

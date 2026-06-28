@@ -6,6 +6,61 @@
   color-scheme: dark;
 }
 
-body {
-  @apply bg-neutral-950 text-neutral-100 antialiased;
+@layer base {
+  body {
+    @apply min-h-screen bg-neutral-950 text-neutral-100 antialiased;
+    background:
+      radial-gradient(60rem 60rem at 85% -10%, rgba(16, 185, 129, 0.10), transparent 60%),
+      radial-gradient(50rem 50rem at -10% 10%, rgba(56, 189, 248, 0.08), transparent 55%),
+      #0a0a0a;
+    background-attachment: fixed;
+  }
+}
+
+@layer components {
+  /* Surfaces */
+  .card {
+    @apply rounded-2xl border border-white/10 bg-neutral-900/60 shadow-xl shadow-black/30 backdrop-blur;
+  }
+  .panel {
+    @apply rounded-xl border border-white/10 bg-neutral-900/40;
+  }
+  .media-frame {
+    @apply overflow-hidden rounded-xl border border-white/10 bg-neutral-900/50;
+  }
+
+  /* Labels */
+  .eyebrow {
+    @apply text-[11px] font-medium uppercase tracking-[0.14em] text-neutral-400;
+  }
+
+  /* Buttons */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-emerald-500 text-neutral-950 shadow-lg shadow-emerald-500/20 hover:bg-emerald-400;
+  }
+  .btn-secondary {
+    @apply btn border border-emerald-500/60 text-emerald-300 hover:bg-emerald-500/10;
+  }
+  .btn-outline {
+    @apply btn border border-white/15 text-neutral-200 hover:bg-white/5;
+  }
+  .btn-ghost {
+    @apply text-sm text-neutral-500 underline-offset-2 transition hover:text-neutral-200 hover:underline;
+  }
+
+  /* Inputs */
+  .input {
+    @apply w-full rounded-lg border border-white/10 bg-neutral-950/60 px-3 py-2 text-sm text-neutral-100 outline-none transition placeholder:text-neutral-600 focus:border-emerald-500/70 focus:ring-2 focus:ring-emerald-500/20 disabled:opacity-50;
+  }
+
+  /* Selectable chip (interior type / style grid) */
+  .chip {
+    @apply cursor-pointer rounded-xl border border-white/10 bg-neutral-950/50 px-3 py-2 text-left text-sm text-neutral-300 transition hover:border-white/25 hover:bg-neutral-900;
+  }
+  .chip-active {
+    @apply border-emerald-500/70 bg-emerald-500/10 text-emerald-200 ring-1 ring-emerald-500/30;
+  }
 }
