@@ -109,7 +109,7 @@ app/
   globals.css           # Tailwind entry
   PlanToThreeD.tsx      # client state machine (the whole flow)
   components/
-    ApiKeyBar.tsx       # static build: dismissible user API-key entry
+    KeyManager.tsx      # static build: bottom-of-app user API-key entry
     PlanUploader.tsx    # file → data URL
     DesignBrief.tsx     # style preset + lighting + plan metadata
     OverviewView.tsx    # brief + plan + overview + 2D↔3D CompareSlider + Approve
