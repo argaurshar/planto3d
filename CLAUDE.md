@@ -29,10 +29,12 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
 3. **Generate overview** — POST `{ plan, brief }` to `/api/overview`; Nano
    Banana 2 returns an **axonometric** top-view of the whole plan
    (`components/OverviewView.tsx`). **Approve** to continue.
-4. **Draw a box** around a room (`components/RoomSelector.tsx`); the selection is
-   captured in **natural image pixels** and cropped client-side (`lib/crop.ts`).
-   Then a per-room **setup table** (`components/RoomSetup.tsx`) picks the
-   **interior type + style** (overrides the brief's style for this room only).
+4. **Draw a box** around a room **on the generated 3D overview**
+   (`components/RoomSelector.tsx`); the selection is captured in **natural image
+   pixels** and cropped client-side (`lib/crop.ts`, which fetches the remote
+   overview to a blob first so the canvas isn't tainted). Then a per-room
+   **setup table** (`components/RoomSetup.tsx`) picks the **interior type +
+   style** (overrides the brief's style for this room only).
 5. **Two-stage room render:**
    - **3a — prompt writer** — `/api/room` `action:"write"` calls a kie.ai vision
      LLM (`lib/kieChat.ts`) to auto-write a **photorealistic interior** prompt,

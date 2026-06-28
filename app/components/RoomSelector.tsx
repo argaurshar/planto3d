@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { normalizeRect, type Rect } from "@/lib/crop";
 
 interface Props {
-  planDataUrl: string;
+  imageSrc: string;
   loading: boolean;
   onSelect: (rect: Rect) => void;
   onBack: () => void;
@@ -20,7 +20,7 @@ interface Point {
  * pixel coordinates so the crop is full-resolution.
  */
 export default function RoomSelector({
-  planDataUrl,
+  imageSrc,
   loading,
   onSelect,
   onBack,
@@ -86,15 +86,16 @@ export default function RoomSelector({
     <div className="card space-y-4 p-4">
       <p className="text-sm text-neutral-300">
         <span className="font-medium text-neutral-100">Which room?</span> Drag a
-        box around a room on the plan — you&apos;ll pick its type and style next.
+        box around a room on the 3D overview — you&apos;ll pick its type and
+        style next.
       </p>
 
       <div className="relative inline-block max-w-full select-none">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           ref={imgRef}
-          src={planDataUrl}
-          alt="2D floor plan — drag to select a room"
+          src={imageSrc}
+          alt="3D axonometric overview — drag to select a room"
           draggable={false}
           className="block max-h-[70vh] w-auto max-w-full rounded-xl border border-white/10 bg-white"
         />

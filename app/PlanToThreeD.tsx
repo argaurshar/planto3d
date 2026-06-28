@@ -222,13 +222,13 @@ export default function PlanToThreeD() {
     }
   }
 
-  // Crop the selection and move to the per-room setup table.
+  // Crop the selection from the 3D overview and move to the per-room setup table.
   async function selectRoom(rect: Rect) {
-    if (!state.planDataUrl) return;
+    if (!state.overviewDataUrl) return;
     const id = nextReq();
     let crop: string;
     try {
-      crop = await cropToDataUrl(state.planDataUrl, rect);
+      crop = await cropToDataUrl(state.overviewDataUrl, rect);
     } catch (err) {
       if (isStale(id)) return;
       dispatch({ type: "ERROR", message: message(err) });
@@ -332,9 +332,9 @@ export default function PlanToThreeD() {
         />
       )}
 
-      {state.step === "select" && state.planDataUrl && (
+      {state.step === "select" && state.overviewDataUrl && (
         <RoomSelector
-          planDataUrl={state.planDataUrl}
+          imageSrc={state.overviewDataUrl}
           loading={state.stage !== "idle"}
           onSelect={selectRoom}
           onBack={goOverview}
