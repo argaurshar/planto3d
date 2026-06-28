@@ -75,10 +75,14 @@ export function promptWriterSystem(
     "Write ONE single-paragraph, richly detailed prompt for a PHOTOREALISTIC",
     "interior render of that room, captured from a natural EYE-LEVEL perspective",
     "as if standing in an open doorway looking into the space.",
-    "Describe: the room type, camera viewpoint, wall/floor/ceiling materials,",
-    "the main furniture and fixtures and their placement (faithful to the room's",
-    "layout, doors and windows shown in the crop), textiles, decor, and the",
-    "lighting and mood.",
+    "CRITICAL — be 100% faithful to the layout shown in the crop: describe ONLY",
+    "the walls, the room shape and proportions, the windows and doors (in their",
+    "exact positions), and the furniture and fixtures that are actually visible,",
+    "keeping their placement and counts the same. Do NOT invent, add, remove,",
+    "move, resize or duplicate any walls, windows, doors, furniture or fixtures,",
+    "and do NOT introduce rooms, openings or objects that are not in the crop.",
+    "Only specify materials, textiles, colours, decor finish, lighting and mood",
+    "(the things a photo would add) — never change the architecture or layout.",
     `Respect this style throughout: ${style}.`,
     `Lighting: ${brief.lighting}.`,
     "Output ONLY the prompt text — no preamble, no headings, no quotes, no lists.",
@@ -93,9 +97,10 @@ export function promptWriterSystem(
  * render even if the user edited it out of the prompt text. `variation`
  * (incremented by Regenerate) nudges a different take.
  *
- * The attached image is the 2D plan crop — explicitly framed as a top-down
- * LAYOUT reference only, so the model produces an eye-level photo rather than
- * copying the plan's lines or viewpoint.
+ * The attached image is the cropped region of the 3D overview; the prompt
+ * insists the render reproduce that room's layout EXACTLY (no hallucinating or
+ * rearranging walls/openings/furniture), changing only the camera to eye-level
+ * plus surface materials and lighting.
  */
 export function roomRenderPrompt(
   interiorPrompt: string,
@@ -116,10 +121,15 @@ export function roomRenderPrompt(
     interiorPrompt.trim(),
     `Overall style: ${style}. Lighting: ${brief.lighting}.`,
     "IMPORTANT: the first attached image is a cropped region of a 3D axonometric",
-    "overview of THIS room — use it as the reference for the room's shape, walls,",
-    "windows, doors and overall furnishing. Recreate that same room as a",
-    "photorealistic, ground-level EYE-LEVEL photograph; do NOT keep its angled,",
-    "top-down/parallel-projection overview camera.",
+    "overview of THIS room. Reproduce that EXACT room — recreate it faithfully as",
+    "a photorealistic, ground-level EYE-LEVEL photograph, only changing the camera",
+    "from the angled overview view to a natural standing eye-level viewpoint.",
+    "PRESERVE THE LAYOUT EXACTLY: the wall positions, the room's shape and",
+    "proportions, the window and door positions, and the furniture arrangement,",
+    "type and count must match the reference. Do NOT add, remove, move, resize,",
+    "duplicate or hallucinate any walls, windows, doors, furniture or fixtures,",
+    "and do NOT invent extra space or rooms. Change only surface materials,",
+    "textiles, colours, decor finish and lighting — never the architecture.",
     overviewClause,
     "Realistic materials and lighting, high detail.",
     "No text, no watermark, no dimensions, no floor-plan lines.",
@@ -129,9 +139,9 @@ export function roomRenderPrompt(
   if (variation <= 0) return base;
   return [
     base,
-    `Variation #${variation}: offer a clearly different take — alternate camera`,
-    "angle, furniture arrangement and styling — while keeping the same room",
-    "type, walls, doors and windows.",
+    `Variation #${variation}: keep the SAME layout, walls, windows, doors and`,
+    "furniture placement exactly — vary only the lighting/time-of-day, material",
+    "and textile finishes, decor accents and eye-level camera height.",
   ].join(" ");
 }
 
@@ -146,9 +156,11 @@ export function fallbackRoomPrompt(
   const style = resolveStyleDescriptor(brief);
   const room = roomType && roomType !== "auto" ? roomType : "room";
   return [
-    `Photorealistic eye-level interior render of a ${room}, based on this cropped`,
-    "region of a 3D axonometric overview. Faithful to the room's layout, doors",
-    "and windows, with plausible furniture and fixtures for the room type.",
+    `Photorealistic eye-level interior render of a ${room}, reproducing this`,
+    "cropped region of a 3D axonometric overview EXACTLY. Preserve the wall",
+    "positions, room shape and proportions, window and door positions, and the",
+    "furniture arrangement and count shown — do NOT add, remove, move or invent",
+    "anything in the layout; change only materials, finishes and lighting.",
     `STYLE: ${style}. Lighting: ${brief.lighting}.`,
   ].join(" ");
 }
