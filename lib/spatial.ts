@@ -160,6 +160,28 @@ export function furnitureHeight(label: string): number {
   return 0.8;
 }
 
+/** Coarse furniture category, used to colour-code the blockout massing map. */
+export type FurnitureCategory =
+  | "bed"
+  | "seating"
+  | "storage"
+  | "table"
+  | "bath"
+  | "rug"
+  | "other";
+
+export function furnitureCategory(label: string): FurnitureCategory {
+  const l = label.toLowerCase();
+  if (/\b(bed|mattress|headboard)\b/.test(l)) return "bed";
+  if (/\b(sofa|couch|armchair|chair|stool|bench|ottoman)\b/.test(l)) return "seating";
+  if (/\b(wardrobe|closet|cupboard|cabinet|bookshelf|shelf|dresser|drawers|fridge|refrigerator|tv|television|media)\b/.test(l))
+    return "storage";
+  if (/\b(desk|table|nightstand|bedside|counter|vanity|kitchen)\b/.test(l)) return "table";
+  if (/\b(sink|basin|toilet|bath|bathtub|shower)\b/.test(l)) return "bath";
+  if (/\b(rug|carpet|mat)\b/.test(l)) return "rug";
+  return "other";
+}
+
 export type Wall = "far" | "near" | "left" | "right";
 
 /** Which wall a center (0-1000 coords, top = far) sits nearest to. */
