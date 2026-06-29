@@ -2,6 +2,8 @@
 
 interface Props {
   cropDataUrl: string | null;
+  /** Eye-level 3D blockout (PNG data URL) that locks the render's layout. */
+  blockoutDataUrl: string | null;
   prompt: string;
   /** "writing" while the LLM drafts the prompt; "rendering" during the image. */
   stage: "idle" | "writing" | "rendering";
@@ -19,6 +21,7 @@ interface Props {
  */
 export default function RoomPrompt({
   cropDataUrl,
+  blockoutDataUrl,
   prompt,
   stage,
   error,
@@ -43,6 +46,22 @@ export default function RoomPrompt({
                 alt="Selected room crop from the plan"
                 className="block w-full"
               />
+            </div>
+          )}
+          {blockoutDataUrl && (
+            <div className="space-y-1">
+              <figcaption className="eyebrow">Layout lock (eye-level)</figcaption>
+              <div className="media-frame bg-white">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={blockoutDataUrl}
+                  alt="Eye-level 3D blockout that locks the render's layout"
+                  className="block w-full"
+                />
+              </div>
+              <p className="text-xs text-neutral-500">
+                The render keeps this exact viewpoint and furniture layout.
+              </p>
             </div>
           )}
         </figure>

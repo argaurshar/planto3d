@@ -29,6 +29,8 @@ interface Body {
   variation?: number;
   /** Hosted overview URL used as an extra reference (validated to kie.ai hosts). */
   reference?: string;
+  /** Eye-level 3D blockout (base64 data URL) used as image-to-image control. */
+  blockout?: string;
 }
 
 function err(message: string, status: number) {
@@ -54,6 +56,15 @@ export async function POST(req: Request) {
   // Only forward the reference if it is an https URL on a kie.ai host.
   const reference = isAllowedReference(body.reference) ? body.reference : undefined;
 
+  // Optional eye-level blockout for image-to-image (render/auto). Validate the
+  // data URL; ignore (fall back to text-to-image) if it's malformed/oversized.
+  let blockout: string | undefined;
+  if (typeof body.blockout === "string" && body.blockout) {
+    if (body.blockout.length <= MAX_DATA_URL_CHARS && dataUrlToInline(body.blockout)) {
+      blockout = body.blockout;
+    }
+  }
+
   // The crop is only needed by the prompt writer (write/auto). The render is
   // text-to-image and needs no image.
   const room = body.room;
@@ -70,41 +81,47 @@ export async function POST(req: Request) {
   }
 
   try {
-    // Stage 3a: write (or fall back to a templated prompt).
+    // Stage 3a: write (or fall back to a templated prompt). Returns the boxes too
+    // so the client can build the eye-level blockout.
     if (action === "write") {
       let prompt: string;
+      let boxes: RoomPromptResponse["boxes"] = [];
       try {
-        prompt = await writeRoomPrompt({ cropDataUrl: room!, brief, roomType, overviewUrl: reference });
+        const r = await writeRoomPrompt({ cropDataUrl: room!, brief, roomType, overviewUrl: reference });
+        prompt = r.prompt;
+        boxes = r.boxes;
       } catch {
         // Degrade gracefully so the user can still render.
         prompt = fallbackRoomPrompt(brief, roomType);
       }
-      const payload: RoomPromptResponse = { prompt };
+      const payload: RoomPromptResponse = { prompt, boxes };
       return NextResponse.json(payload);
     }
 
-    // Stage 3b: render from the detailed prompt (text-to-image, no input image).
+    // Stage 3b: render. With a blockout it's image-to-image (layout-locked);
+    // without one it's text-to-image.
     if (action === "render") {
       const interior = (body.prompt ?? "").trim() || fallbackRoomPrompt(brief, roomType);
       const { imageUrl } = await generateImage(
-        roomRenderPrompt(interior, variation, brief),
-        [],
+        roomRenderPrompt(interior, variation, brief, Boolean(blockout)),
+        blockout ? [blockout] : [],
         "room.png",
       );
       const payload: GenerateImageResponse = { image: imageUrl, mimeType: "image/png" };
       return NextResponse.json(payload);
     }
 
-    // action === "auto": write (from the crop) then render text-to-image.
+    // action === "auto": write (from the crop) then render.
     let interior: string;
     try {
-      interior = await writeRoomPrompt({ cropDataUrl: room!, brief, roomType, overviewUrl: reference });
+      const r = await writeRoomPrompt({ cropDataUrl: room!, brief, roomType, overviewUrl: reference });
+      interior = r.prompt;
     } catch {
       interior = fallbackRoomPrompt(brief, roomType);
     }
     const { imageUrl } = await generateImage(
-      roomRenderPrompt(interior, variation, brief),
-      [],
+      roomRenderPrompt(interior, variation, brief, Boolean(blockout)),
+      blockout ? [blockout] : [],
       "room.png",
     );
     const payload: GenerateImageResponse & RoomPromptResponse = {
