@@ -70,6 +70,9 @@ export default function RoomPrompt({
                     ● ON — {layoutLock.count} object{layoutLock.count === 1 ? "" : "s"} detected; the
                     render preserves this viewpoint and layout.
                   </p>
+                  {layoutLock.summary && (
+                    <p className="text-xs text-neutral-400">Detected: {layoutLock.summary}.</p>
+                  )}
                 </>
               ) : (
                 <p className="text-xs text-amber-400">

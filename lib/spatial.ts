@@ -24,15 +24,31 @@ export interface SpatialBox {
 export const SPATIAL_EXTRACTION_PROMPT = [
   "You are an object-detection system. The image is a top-down view of a single",
   "room from a floor plan / 3D overview.",
-  "Detect every piece of furniture and every fixture, plus all windows and doors.",
+  "Detect EVERY individual piece of furniture and every fixture, plus all windows",
+  "and doors. Be exhaustive: a typical furnished room contains 4-10 items (e.g. a",
+  "bedroom has a bed, two nightstands, a wardrobe/closet, a dresser or media unit,",
+  "a window and a door). DO NOT stop after one object — scan the whole image and",
+  "list each item you can see as a SEPARATE entry, even small ones.",
   'Each element is {"label": string, "box_2d": [ymin, xmin, ymax, xmax]}.',
   "Coordinates are integers normalized to 0-1000 with the Y coordinate first",
-  "(top-left origin). Use a short, specific label (e.g. \"bed\", \"sofa\", \"window\",",
-  "\"door\"). List each physical item separately so counts are accurate. Limit to",
-  "the 25 most prominent items.",
+  "(top-left origin). Use a short, specific label (e.g. \"bed\", \"nightstand\",",
+  "\"wardrobe\", \"sofa\", \"window\", \"door\").",
+  "Example: [{\"label\":\"bed\",\"box_2d\":[300,350,720,650]},",
+  "{\"label\":\"nightstand\",\"box_2d\":[300,300,420,350]},",
+  "{\"label\":\"window\",\"box_2d\":[0,350,40,650]}]",
+  "Limit to the 25 most prominent items.",
   "Respond with ONLY a JSON array — the first character of your reply must be",
   "'[' and the last must be ']'. No prose, no explanation, no markdown fences.",
   "If the room is genuinely empty, return [].",
+].join(" ");
+
+/** Forceful second-pass instruction used when the first detection found < 2 items. */
+export const SPATIAL_RETRY_PROMPT = [
+  SPATIAL_EXTRACTION_PROMPT,
+  "IMPORTANT: a previous pass found almost nothing, which is wrong for a",
+  "furnished room. Look again carefully and return EVERY bed, seat, table, desk,",
+  "cabinet, wardrobe, appliance, rug, window and door you can identify — aim for",
+  "at least 4 items if the room is furnished.",
 ].join(" ");
 
 /** Pull the first array-valued property out of a parsed object, if any. */
@@ -108,6 +124,19 @@ export function parseSpatialBoxes(content: string): SpatialBox[] {
 const COUNT_WORDS = ["", "one", "two", "three", "four", "five", "six", "seven", "eight"];
 function countWord(n: number): string {
   return n < COUNT_WORDS.length ? COUNT_WORDS[n] : String(n);
+}
+
+/**
+ * Short human summary of detected labels with counts, e.g.
+ * "bed, 2 nightstands, media cabinet, window" — for the UI coverage line.
+ */
+export function summarizeLabels(boxes: SpatialBox[]): string {
+  if (!boxes.length) return "";
+  const counts = new Map<string, number>();
+  for (const b of boxes) counts.set(b.label, (counts.get(b.label) ?? 0) + 1);
+  return [...counts.entries()]
+    .map(([label, n]) => (n > 1 ? `${n} ${label}s` : label))
+    .join(", ");
 }
 
 /** True if the label is a wall opening (window/door) rather than furniture. */
