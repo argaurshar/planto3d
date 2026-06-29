@@ -1,9 +1,13 @@
 "use client";
 
+import type { LayoutLock } from "../PlanToThreeD";
+
 interface Props {
   cropDataUrl: string | null;
   /** Eye-level 3D blockout (PNG data URL) that locks the render's layout. */
   blockoutDataUrl: string | null;
+  /** Whether the render is geometry-locked to the blockout, and why not if not. */
+  layoutLock: LayoutLock;
   prompt: string;
   /** "writing" while the LLM drafts the prompt; "rendering" during the image. */
   stage: "idle" | "writing" | "rendering";
@@ -22,6 +26,7 @@ interface Props {
 export default function RoomPrompt({
   cropDataUrl,
   blockoutDataUrl,
+  layoutLock,
   prompt,
   stage,
   error,
@@ -48,20 +53,33 @@ export default function RoomPrompt({
               />
             </div>
           )}
-          {blockoutDataUrl && (
+          {!writing && (
             <div className="space-y-1">
               <figcaption className="eyebrow">Layout lock (eye-level)</figcaption>
-              <div className="media-frame bg-white">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={blockoutDataUrl}
-                  alt="Eye-level 3D blockout that locks the render's layout"
-                  className="block w-full"
-                />
-              </div>
-              <p className="text-xs text-neutral-500">
-                The render keeps this exact viewpoint and furniture layout.
-              </p>
+              {blockoutDataUrl ? (
+                <>
+                  <div className="media-frame bg-white">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={blockoutDataUrl}
+                      alt="Eye-level 3D blockout that locks the render's layout"
+                      className="block w-full"
+                    />
+                  </div>
+                  <p className="text-xs text-emerald-400">
+                    ● ON — {layoutLock.count} object{layoutLock.count === 1 ? "" : "s"} detected; the
+                    render preserves this viewpoint and layout.
+                  </p>
+                </>
+              ) : (
+                <p className="text-xs text-amber-400">
+                  ● OFF —{" "}
+                  {layoutLock.status === "no-webgl"
+                    ? "the 3D preview couldn't render in this browser"
+                    : "no objects were detected in the crop"}
+                  ; rendering from the prompt only (layout may drift).
+                </p>
+              )}
             </div>
           )}
         </figure>

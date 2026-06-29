@@ -16,6 +16,12 @@ import type { DesignBrief, RoomType } from "@/lib/types";
 type Step = "upload" | "overview" | "select" | "roomSetup" | "roomPrompt" | "room";
 type Stage = "idle" | "writing" | "rendering";
 
+/** Whether the render is geometry-locked to a blockout, and why not if not. */
+export type LayoutLock = {
+  status: "none" | "locked" | "no-webgl" | "no-objects";
+  count: number;
+};
+
 interface State {
   step: Step;
   planDataUrl: string | null;
@@ -26,6 +32,8 @@ interface State {
   cropAspect: number;
   /** Eye-level 3D blockout of the room (PNG data URL) used to lock the render. */
   blockoutDataUrl: string | null;
+  /** Status of the layout lock (detected object count + why it's on/off). */
+  layoutLock: LayoutLock;
   roomType: RoomType;
   /** Per-room style override (defaults to the brief's style). */
   roomStyleId: string;
@@ -52,7 +60,7 @@ type Action =
   | { type: "SET_ROOM_STYLE"; styleId: string }
   | { type: "BEGIN_SETUP"; dataUrl: string; aspect: number }
   | { type: "START_WRITE" }
-  | { type: "PROMPT_DONE"; prompt: string; blockout: string | null }
+  | { type: "PROMPT_DONE"; prompt: string; blockout: string | null; lock: LayoutLock }
   | { type: "REWRITE" }
   | { type: "EDIT_PROMPT"; value: string }
   | { type: "RENDER_START" }
@@ -72,6 +80,7 @@ const initialState: State = {
   cropDataUrl: null,
   cropAspect: 1,
   blockoutDataUrl: null,
+  layoutLock: { status: "none", count: 0 },
   roomType: "auto",
   roomStyleId: DEFAULT_BRIEF.styleId,
   roomPrompt: "",
@@ -113,6 +122,7 @@ function reducer(state: State, action: Action): State {
         cropDataUrl: action.dataUrl,
         cropAspect: action.aspect,
         blockoutDataUrl: null,
+        layoutLock: { status: "none", count: 0 },
         roomStyleId: state.brief.styleId,
         roomPrompt: "",
         roomVersions: [],
@@ -124,7 +134,13 @@ function reducer(state: State, action: Action): State {
     case "START_WRITE":
       return { ...state, step: "roomPrompt", stage: "writing", error: null };
     case "PROMPT_DONE":
-      return { ...state, stage: "idle", roomPrompt: action.prompt, blockoutDataUrl: action.blockout };
+      return {
+        ...state,
+        stage: "idle",
+        roomPrompt: action.prompt,
+        blockoutDataUrl: action.blockout,
+        layoutLock: action.lock,
+      };
     case "REWRITE":
       return { ...state, stage: "writing", error: null };
     case "EDIT_PROMPT":
@@ -155,6 +171,7 @@ function reducer(state: State, action: Action): State {
         step: "select",
         cropDataUrl: null,
         blockoutDataUrl: null,
+        layoutLock: { status: "none", count: 0 },
         roomPrompt: "",
         roomVersions: [],
         currentVersion: 0,
@@ -226,11 +243,18 @@ export default function PlanToThreeD() {
         blockout = null;
       }
       if (isStale(id)) return;
-      dispatch({ type: "PROMPT_DONE", prompt, blockout });
+      const lock: LayoutLock = {
+        count: boxes.length,
+        status: boxes.length === 0 ? "no-objects" : blockout ? "locked" : "no-webgl",
+      };
+      if (typeof console !== "undefined") {
+        console.debug("[voxa] layout lock:", lock.status, "boxes:", boxes.length, "blockout:", Boolean(blockout));
+      }
+      dispatch({ type: "PROMPT_DONE", prompt, blockout, lock });
     } catch (err) {
       if (isStale(id)) return;
       // Leave the box editable so the user can still write a prompt by hand.
-      dispatch({ type: "PROMPT_DONE", prompt: "", blockout: null });
+      dispatch({ type: "PROMPT_DONE", prompt: "", blockout: null, lock: { status: "none", count: 0 } });
       dispatch({ type: "ERROR", message: message(err) });
     }
   }
@@ -369,6 +393,7 @@ export default function PlanToThreeD() {
         <RoomPrompt
           cropDataUrl={state.cropDataUrl}
           blockoutDataUrl={state.blockoutDataUrl}
+          layoutLock={state.layoutLock}
           prompt={state.roomPrompt}
           stage={state.stage}
           error={state.error}
@@ -382,6 +407,7 @@ export default function PlanToThreeD() {
       {state.step === "room" && (
         <RoomResult
           cropDataUrl={state.cropDataUrl}
+          layoutLock={state.layoutLock}
           versions={state.roomVersions}
           currentIndex={state.currentVersion}
           loading={state.loading}

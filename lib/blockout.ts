@@ -48,7 +48,8 @@ export async function buildBlockoutDataUrl(
   let THREE: typeof import("three");
   try {
     THREE = await import("three");
-  } catch {
+  } catch (e) {
+    if (typeof console !== "undefined") console.debug("[voxa] blockout: three import failed", e);
     return null;
   }
 
@@ -63,7 +64,8 @@ export async function buildBlockoutDataUrl(
       antialias: true,
       preserveDrawingBuffer: true, // required for toDataURL
     });
-  } catch {
+  } catch (e) {
+    if (typeof console !== "undefined") console.debug("[voxa] blockout: no WebGL context", e);
     return null; // no WebGL context
   }
 

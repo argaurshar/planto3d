@@ -25,52 +25,82 @@ export const SPATIAL_EXTRACTION_PROMPT = [
   "You are an object-detection system. The image is a top-down view of a single",
   "room from a floor plan / 3D overview.",
   "Detect every piece of furniture and every fixture, plus all windows and doors.",
-  "Return ONLY a JSON array (no prose, no markdown fences) where each element is",
-  '{"label": string, "box_2d": [ymin, xmin, ymax, xmax]}.',
+  'Each element is {"label": string, "box_2d": [ymin, xmin, ymax, xmax]}.',
   "Coordinates are integers normalized to 0-1000 with the Y coordinate first",
   "(top-left origin). Use a short, specific label (e.g. \"bed\", \"sofa\", \"window\",",
   "\"door\"). List each physical item separately so counts are accurate. Limit to",
-  "the 25 most prominent items. If the room is empty, return [].",
+  "the 25 most prominent items.",
+  "Respond with ONLY a JSON array — the first character of your reply must be",
+  "'[' and the last must be ']'. No prose, no explanation, no markdown fences.",
+  "If the room is genuinely empty, return [].",
 ].join(" ");
 
+/** Pull the first array-valued property out of a parsed object, if any. */
+function firstArrayProp(obj: Record<string, unknown>): unknown[] | null {
+  for (const v of Object.values(obj)) if (Array.isArray(v)) return v;
+  return null;
+}
+
+/** Coerce a 4-number box (any common key/scale) to 0-1000 [ymin,xmin,ymax,xmax]. */
+function coerceBox(raw: unknown): [number, number, number, number] | null {
+  if (!Array.isArray(raw) || raw.length !== 4) return null;
+  const n = raw.map(Number);
+  if (n.some((v) => !Number.isFinite(v))) return null;
+  const [a, b, c, d] = n as [number, number, number, number];
+  const max = Math.max(Math.abs(a), Math.abs(b), Math.abs(c), Math.abs(d));
+  // Rescale to 0-1000: 0-1 normalized → ×1000; pixel coords (>1000) → ÷max×1000.
+  if (max <= 1) return [a * 1000, b * 1000, c * 1000, d * 1000];
+  if (max > 1000) return [(a / max) * 1000, (b / max) * 1000, (c / max) * 1000, (d / max) * 1000];
+  return [a, b, c, d];
+}
+
 /**
- * Parse the detection model's reply into boxes. Tolerant of markdown fences and
- * surrounding prose; returns [] on any malformed input so callers can degrade
- * gracefully (no layout block, today's behavior).
+ * Parse the detection model's reply into boxes. Tolerant of markdown fences,
+ * surrounding prose, an object wrapper ({objects:[…]}), alternate key names
+ * (box/bbox/bounding_box, name/class) and coordinate scales (0-1, 0-1000, or
+ * pixels). Returns [] on any malformed input so callers degrade gracefully.
  */
 export function parseSpatialBoxes(content: string): SpatialBox[] {
   if (!content) return [];
   let text = content.trim();
   // Strip ```json fences if present.
   text = text.replace(/^```[a-z]*\s*/i, "").replace(/\s*```$/i, "").trim();
-  // Grab the outermost JSON array if the model wrapped it in prose.
-  const start = text.indexOf("[");
-  const end = text.lastIndexOf("]");
-  if (start === -1 || end === -1 || end <= start) return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text.slice(start, end + 1));
-  } catch {
-    return [];
+
+  // Prefer the outermost array; if the model wrapped it in an object, parse that.
+  let parsed: unknown = null;
+  const aStart = text.indexOf("[");
+  const aEnd = text.lastIndexOf("]");
+  if (aStart !== -1 && aEnd > aStart) {
+    try {
+      parsed = JSON.parse(text.slice(aStart, aEnd + 1));
+    } catch {
+      /* fall through to object parse */
+    }
+  }
+  if (!Array.isArray(parsed)) {
+    const oStart = text.indexOf("{");
+    const oEnd = text.lastIndexOf("}");
+    if (oStart !== -1 && oEnd > oStart) {
+      try {
+        const obj = JSON.parse(text.slice(oStart, oEnd + 1));
+        if (obj && typeof obj === "object") parsed = firstArrayProp(obj as Record<string, unknown>);
+      } catch {
+        return [];
+      }
+    }
   }
   if (!Array.isArray(parsed)) return [];
+
   const boxes: SpatialBox[] = [];
   for (const item of parsed) {
     if (!item || typeof item !== "object") continue;
-    const label = (item as { label?: unknown }).label;
-    const box = (item as { box_2d?: unknown }).box_2d;
-    if (typeof label !== "string" || !label.trim()) continue;
-    if (
-      !Array.isArray(box) ||
-      box.length !== 4 ||
-      box.some((n) => typeof n !== "number" || !Number.isFinite(n))
-    ) {
-      continue;
-    }
-    boxes.push({
-      label: label.trim().toLowerCase(),
-      box_2d: [box[0], box[1], box[2], box[3]] as [number, number, number, number],
-    });
+    const o = item as Record<string, unknown>;
+    const labelRaw = o.label ?? o.name ?? o.class ?? o.type;
+    const boxRaw = o.box_2d ?? o.box ?? o.bbox ?? o.bounding_box ?? o.boundingBox;
+    if (typeof labelRaw !== "string" || !labelRaw.trim()) continue;
+    const box = coerceBox(boxRaw);
+    if (!box) continue;
+    boxes.push({ label: labelRaw.trim().toLowerCase(), box_2d: box });
   }
   return boxes;
 }
