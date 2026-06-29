@@ -35,7 +35,7 @@ export default function CompareSlider({
   return (
     <div
       ref={ref}
-      className="media-frame relative touch-none select-none bg-white"
+      className="media-frame relative mx-auto block w-fit max-w-full touch-none select-none bg-white"
       onPointerDown={(e) => {
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
         setDragging(true);
@@ -44,9 +44,14 @@ export default function CompareSlider({
       onPointerMove={(e) => dragging && moveTo(e.clientX)}
       onPointerUp={() => setDragging(false)}
     >
-      {/* Base: 2D plan defines the box size */}
+      {/* Base: 2D plan defines the box size (capped to the viewport height) */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={beforeSrc} alt={beforeLabel} draggable={false} className="block w-full" />
+      <img
+        src={beforeSrc}
+        alt={beforeLabel}
+        draggable={false}
+        className="block max-h-[60vh] w-auto max-w-full"
+      />
 
       {/* Overlay: 3D overview, revealed up to the divider */}
       {/* eslint-disable-next-line @next/next/no-img-element */}

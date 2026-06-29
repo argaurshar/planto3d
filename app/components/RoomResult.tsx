@@ -1,9 +1,11 @@
 "use client";
 
 import DownloadButton from "./DownloadButton";
+import type { LayoutLock } from "../PlanToThreeD";
 
 interface Props {
   cropDataUrl: string | null;
+  layoutLock: LayoutLock;
   versions: string[];
   currentIndex: number;
   loading: boolean;
@@ -18,6 +20,7 @@ interface Props {
 /** Step 5/6: show the room render, regenerate, and flip through versions. */
 export default function RoomResult({
   cropDataUrl,
+  layoutLock,
   versions,
   currentIndex,
   loading,
@@ -46,7 +49,19 @@ export default function RoomResult({
 
         <figure className="space-y-2">
           <figcaption className="flex items-center justify-between">
-            <span className="eyebrow">Photorealistic interior</span>
+            <div className="flex items-center gap-2">
+              <span className="eyebrow">Photorealistic interior</span>
+              {current &&
+                (layoutLock.status === "locked" ? (
+                  <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-300">
+                    Layout-locked
+                  </span>
+                ) : (
+                  <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300">
+                    Prompt-only
+                  </span>
+                ))}
+            </div>
             <div className="flex items-center gap-3">
               {versions.length > 0 && (
                 <span className="text-xs text-neutral-400">
@@ -67,7 +82,7 @@ export default function RoomResult({
               <img
                 src={current}
                 alt="Generated photorealistic interior render of the room"
-                className="block w-full"
+                className="block max-h-[68vh] w-auto max-w-full"
               />
             ) : (
               <span className="px-4 py-8 text-center text-sm text-neutral-500">

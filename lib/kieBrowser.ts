@@ -176,8 +176,19 @@ async function detectLayoutBrowser(
       apiKey,
     );
     const boxes = parseSpatialBoxes(content);
+    if (typeof console !== "undefined") {
+      console.debug(
+        "[voxa] detection: reply",
+        (content || "").length,
+        "chars →",
+        boxes.length,
+        "boxes",
+        boxes.length ? `(${boxes.map((b) => b.label).join(", ")})` : "",
+      );
+    }
     return { layout: describeLayout(boxes), boxes };
-  } catch {
+  } catch (e) {
+    if (typeof console !== "undefined") console.debug("[voxa] detection failed:", e);
     return { layout: "", boxes: [] };
   }
 }
