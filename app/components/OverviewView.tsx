@@ -44,11 +44,15 @@ export default function OverviewView({
         {overviewDataUrl ? (
           <CompareSlider beforeSrc={planDataUrl} afterSrc={overviewDataUrl} />
         ) : (
-          <div className="media-frame relative bg-white">
+          <div className="relative mx-auto block w-fit max-w-full">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={planDataUrl} alt="Uploaded 2D floor plan" className="block w-full" />
+            <img
+              src={planDataUrl}
+              alt="Uploaded 2D floor plan"
+              className="block max-h-[60vh] w-auto max-w-full rounded-xl border border-white/10 bg-white"
+            />
             {loading && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-sm text-neutral-200 backdrop-blur-sm">
+              <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/50 text-sm text-neutral-200 backdrop-blur-sm">
                 Generating axonometric overview…
               </div>
             )}

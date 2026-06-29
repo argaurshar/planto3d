@@ -67,7 +67,7 @@ export default function RoomResult({
               <img
                 src={current}
                 alt="Generated photorealistic interior render of the room"
-                className="block w-full"
+                className="block max-h-[68vh] w-auto max-w-full"
               />
             ) : (
               <span className="px-4 py-8 text-center text-sm text-neutral-500">
