@@ -1,5 +1,7 @@
 // Shared types used across client and server.
 
+import type { SpatialBox } from "./spatial";
+
 /** A base64-encoded image plus its mime type (no data: URL prefix). */
 export interface InlineImage {
   /** Raw base64 (no `data:<mime>;base64,` prefix). */
@@ -61,6 +63,12 @@ export interface GenerateImageResponse {
 export interface RoomPromptResponse {
   /** The auto-written, editable photorealistic interior prompt. */
   prompt: string;
+  /**
+   * Detected spatial boxes for the room crop (Gemini 0-1000 coords). Surfaced to
+   * the client so it can build the eye-level 3D blockout for the render. Empty/
+   * omitted when detection failed.
+   */
+  boxes?: SpatialBox[];
 }
 
 export interface ApiError {

@@ -80,24 +80,53 @@ function countWord(n: number): string {
   return n < COUNT_WORDS.length ? COUNT_WORDS[n] : String(n);
 }
 
+/** True if the label is a wall opening (window/door) rather than furniture. */
+export function isOpeningLabel(label: string): boolean {
+  return /\b(window|door|doorway|entry|opening|sliding door|french door|skylight)\b/.test(
+    label.toLowerCase(),
+  );
+}
+
+/** Approximate height (metres) of a furniture/fixture label, for the 3D blockout. */
+export function furnitureHeight(label: string): number {
+  const l = label.toLowerCase();
+  if (/\b(wardrobe|closet|cupboard|cabinet|bookshelf|shelf|fridge|refrigerator)\b/.test(l)) return 2.0;
+  if (/\b(door|doorway)\b/.test(l)) return 2.0;
+  if (/\b(curtain|window|skylight)\b/.test(l)) return 1.5;
+  if (/\b(plant|lamp|floor lamp|mirror|tv|television)\b/.test(l)) return 1.4;
+  if (/\b(desk|table|dining table|dresser|vanity|sink|basin|counter|kitchen)\b/.test(l)) return 0.78;
+  if (/\b(sofa|couch|armchair|chair|toilet|bathtub|bath|stool|bench)\b/.test(l)) return 0.85;
+  if (/\b(bed|mattress)\b/.test(l)) return 0.55;
+  if (/\b(nightstand|bedside|side table|coffee table|rug|carpet|ottoman)\b/.test(l)) return 0.5;
+  return 0.8;
+}
+
+export type Wall = "far" | "near" | "left" | "right";
+
+/** Which wall a center (0-1000 coords, top = far) sits nearest to. */
+export function nearestWall(cx: number, cy: number): Wall {
+  const dists: Array<[number, Wall]> = [
+    [cy, "far"],
+    [1000 - cy, "near"],
+    [cx, "left"],
+    [1000 - cx, "right"],
+  ];
+  dists.sort((a, b) => a[0] - b[0]);
+  return dists[0][1];
+}
+
+const WALL_WORD: Record<Wall, string> = {
+  far: "far wall (back)",
+  near: "near wall (front)",
+  left: "left wall",
+  right: "right wall",
+};
+
 /** Map a 0-1000 center to a coarse zone word. */
 function band(v: number, low: string, mid: string, high: string): string {
   if (v < 333) return low;
   if (v < 666) return mid;
   return high;
-}
-
-/** Which wall a window/door box sits against, from its center. */
-function wallOf(cx: number, cy: number): string {
-  // Distance of the center to each of the four edges; nearest edge = its wall.
-  const dists: Array<[number, string]> = [
-    [cy, "far wall (back)"],
-    [1000 - cy, "near wall (front)"],
-    [cx, "left wall"],
-    [1000 - cx, "right wall"],
-  ];
-  dists.sort((a, b) => a[0] - b[0]);
-  return dists[0][1];
 }
 
 /**
@@ -109,8 +138,7 @@ function wallOf(cx: number, cy: number): string {
 export function describeLayout(boxes: SpatialBox[]): string {
   if (!boxes.length) return "";
 
-  const isOpening = (label: string) =>
-    /\b(window|door|doorway|entry|opening|sliding door|french door)\b/.test(label);
+  const isOpening = isOpeningLabel;
 
   const furniture: string[] = [];
   const openings: string[] = [];
@@ -127,7 +155,7 @@ export function describeLayout(boxes: SpatialBox[]): string {
       const [ymin, xmin, ymax, xmax] = b.box_2d;
       const cy = (ymin + ymax) / 2;
       const cx = (xmin + xmax) / 2;
-      if (isOpening(label)) return wallOf(cx, cy);
+      if (isOpening(label)) return WALL_WORD[nearestWall(cx, cy)];
       const vert = band(cy, "back", "middle", "front");
       const horiz = band(cx, "left", "center", "right");
       return vert === "middle" && horiz === "center" ? "center" : `${vert}-${horiz}`;

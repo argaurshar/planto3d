@@ -3,6 +3,7 @@ import "server-only";
 import { KieError, requireApiKey, mapKieStatus, uploadBase64 } from "./kie";
 import { promptWriterSystem } from "./prompts";
 import { SPATIAL_EXTRACTION_PROMPT, parseSpatialBoxes, describeLayout } from "./spatial";
+import type { SpatialBox } from "./spatial";
 import type { DesignBrief, RoomType } from "./types";
 
 /**
@@ -70,10 +71,14 @@ async function chatComplete(
 
 /**
  * Stage 3a spatial grounding: run an object-detection pass on the room crop and
- * return a natural-language layout string, or "" if detection fails/empties.
- * Best-effort — never throws (the prompt writer degrades to today's behavior).
+ * return the detected boxes (for the client 3D blockout) plus a natural-language
+ * layout string (for the prompt). Best-effort — never throws (the prompt writer
+ * degrades to today's behavior on failure).
  */
-async function detectLayout(imageUrl: string, key: string): Promise<string> {
+async function detectLayout(
+  imageUrl: string,
+  key: string,
+): Promise<{ layout: string; boxes: SpatialBox[] }> {
   try {
     const content = await chatComplete(
       SPATIAL_EXTRACTION_PROMPT,
@@ -83,14 +88,16 @@ async function detectLayout(imageUrl: string, key: string): Promise<string> {
       ],
       key,
     );
-    return describeLayout(parseSpatialBoxes(content));
+    const boxes = parseSpatialBoxes(content);
+    return { layout: describeLayout(boxes), boxes };
   } catch {
-    return "";
+    return { layout: "", boxes: [] };
   }
 }
 
 /**
- * Write a photorealistic interior prompt for the given room crop.
+ * Write a photorealistic interior prompt for the given room crop, plus the
+ * detected spatial boxes (used by the client to build the eye-level blockout).
  * `cropDataUrl` is a base64 data URL (uploaded to get a hosted URL first).
  */
 export async function writeRoomPrompt(args: {
@@ -99,12 +106,12 @@ export async function writeRoomPrompt(args: {
   roomType: RoomType;
   /** Optional hosted overview URL for whole-home style consistency. */
   overviewUrl?: string;
-}): Promise<string> {
+}): Promise<{ prompt: string; boxes: SpatialBox[] }> {
   const key = requireApiKey();
   const imageUrl = await uploadBase64(args.cropDataUrl, "room.png");
 
   // Stage 3a.0: ground the prompt in a detected layout of the crop.
-  const layout = await detectLayout(imageUrl, key);
+  const { layout, boxes } = await detectLayout(imageUrl, key);
   const hasOverview = Boolean(args.overviewUrl);
   const system = promptWriterSystem(args.brief, args.roomType, hasOverview, Boolean(layout));
 
@@ -123,7 +130,7 @@ export async function writeRoomPrompt(args: {
   if (!content) {
     throw new KieError("Prompt generator returned no text.");
   }
-  return sanitizePrompt(content);
+  return { prompt: sanitizePrompt(content), boxes };
 }
 
 /**

@@ -8,6 +8,7 @@ import RoomSetup from "./components/RoomSetup";
 import RoomPrompt from "./components/RoomPrompt";
 import RoomResult from "./components/RoomResult";
 import { requestOverview, requestRoomPrompt, requestRoomRender } from "@/lib/api";
+import { buildBlockoutDataUrl } from "@/lib/blockout";
 import { cropToDataUrl, type Rect } from "@/lib/crop";
 import { DEFAULT_BRIEF } from "@/lib/styles";
 import type { DesignBrief, RoomType } from "@/lib/types";
@@ -21,6 +22,10 @@ interface State {
   brief: DesignBrief;
   overviewDataUrl: string | null;
   cropDataUrl: string | null;
+  /** Pixel aspect (w/h) of the room crop, used to proportion the 3D blockout. */
+  cropAspect: number;
+  /** Eye-level 3D blockout of the room (PNG data URL) used to lock the render. */
+  blockoutDataUrl: string | null;
   roomType: RoomType;
   /** Per-room style override (defaults to the brief's style). */
   roomStyleId: string;
@@ -45,9 +50,9 @@ type Action =
   | { type: "GO_OVERVIEW" }
   | { type: "SET_ROOM_TYPE"; value: RoomType }
   | { type: "SET_ROOM_STYLE"; styleId: string }
-  | { type: "BEGIN_SETUP"; dataUrl: string }
+  | { type: "BEGIN_SETUP"; dataUrl: string; aspect: number }
   | { type: "START_WRITE" }
-  | { type: "PROMPT_DONE"; prompt: string }
+  | { type: "PROMPT_DONE"; prompt: string; blockout: string | null }
   | { type: "REWRITE" }
   | { type: "EDIT_PROMPT"; value: string }
   | { type: "RENDER_START" }
@@ -65,6 +70,8 @@ const initialState: State = {
   brief: DEFAULT_BRIEF,
   overviewDataUrl: null,
   cropDataUrl: null,
+  cropAspect: 1,
+  blockoutDataUrl: null,
   roomType: "auto",
   roomStyleId: DEFAULT_BRIEF.styleId,
   roomPrompt: "",
@@ -104,6 +111,8 @@ function reducer(state: State, action: Action): State {
         ...state,
         step: "roomSetup",
         cropDataUrl: action.dataUrl,
+        cropAspect: action.aspect,
+        blockoutDataUrl: null,
         roomStyleId: state.brief.styleId,
         roomPrompt: "",
         roomVersions: [],
@@ -115,7 +124,7 @@ function reducer(state: State, action: Action): State {
     case "START_WRITE":
       return { ...state, step: "roomPrompt", stage: "writing", error: null };
     case "PROMPT_DONE":
-      return { ...state, stage: "idle", roomPrompt: action.prompt };
+      return { ...state, stage: "idle", roomPrompt: action.prompt, blockoutDataUrl: action.blockout };
     case "REWRITE":
       return { ...state, stage: "writing", error: null };
     case "EDIT_PROMPT":
@@ -145,6 +154,7 @@ function reducer(state: State, action: Action): State {
         ...state,
         step: "select",
         cropDataUrl: null,
+        blockoutDataUrl: null,
         roomPrompt: "",
         roomVersions: [],
         currentVersion: 0,
@@ -197,21 +207,30 @@ export default function PlanToThreeD() {
     }
   }
 
-  // Write (or rewrite) the interior prompt for the current crop.
+  // Write (or rewrite) the interior prompt for the current crop, and build the
+  // eye-level 3D blockout from the detected boxes so the render can lock layout.
   async function writePrompt(crop: string, id: number) {
     try {
-      const prompt = await requestRoomPrompt(
+      const { prompt, boxes } = await requestRoomPrompt(
         crop,
         effectiveBrief(),
         state.roomType,
         state.overviewDataUrl ?? undefined,
       );
       if (isStale(id)) return;
-      dispatch({ type: "PROMPT_DONE", prompt });
+      // Best-effort: a null blockout (no boxes / no WebGL) falls back to text-to-image.
+      let blockout: string | null = null;
+      try {
+        blockout = await buildBlockoutDataUrl(boxes, state.cropAspect);
+      } catch {
+        blockout = null;
+      }
+      if (isStale(id)) return;
+      dispatch({ type: "PROMPT_DONE", prompt, blockout });
     } catch (err) {
       if (isStale(id)) return;
       // Leave the box editable so the user can still write a prompt by hand.
-      dispatch({ type: "PROMPT_DONE", prompt: "" });
+      dispatch({ type: "PROMPT_DONE", prompt: "", blockout: null });
       dispatch({ type: "ERROR", message: message(err) });
     }
   }
@@ -229,7 +248,8 @@ export default function PlanToThreeD() {
       return;
     }
     if (isStale(id)) return;
-    dispatch({ type: "BEGIN_SETUP", dataUrl: crop });
+    const aspect = rect.height > 0 ? rect.width / rect.height : 1;
+    dispatch({ type: "BEGIN_SETUP", dataUrl: crop, aspect });
   }
 
   // After the user picks type/style, write the interior prompt.
@@ -256,6 +276,7 @@ export default function PlanToThreeD() {
         state.roomPrompt,
         state.variation,
         effectiveBrief(),
+        state.blockoutDataUrl ?? undefined,
       );
       if (isStale(id)) return;
       dispatch({ type: "ROOM_DONE", dataUrl: image });
@@ -274,6 +295,7 @@ export default function PlanToThreeD() {
         state.roomPrompt,
         state.variation,
         effectiveBrief(),
+        state.blockoutDataUrl ?? undefined,
       );
       if (isStale(id)) return;
       dispatch({ type: "ROOM_DONE", dataUrl: image });
@@ -346,6 +368,7 @@ export default function PlanToThreeD() {
       {state.step === "roomPrompt" && (
         <RoomPrompt
           cropDataUrl={state.cropDataUrl}
+          blockoutDataUrl={state.blockoutDataUrl}
           prompt={state.roomPrompt}
           stage={state.stage}
           error={state.error}

@@ -10,9 +10,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@types/three": "^0.185.0",
     "next": "^15.5.19",
     "react": "19.2.0",
-    "react-dom": "19.2.0"
+    "react-dom": "19.2.0",
+    "three": "^0.185.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

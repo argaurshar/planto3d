@@ -52,12 +52,22 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
      layout fidelity is improved, not guaranteed (true enforcement would need
      ControlNet/structural conditioning, which nano-banana / Gemini image models
      don't expose).
-   - **3b — render** — `action:"render"` is **text-to-image**: it sends ONLY the
-     detailed prompt (no input image) to Nano Banana 2 → a photorealistic
-     **eye-level interior** (`components/RoomResult.tsx`). The top-down crop is
-     deliberately **not** fed to the renderer (doing so dragged outputs back to a
-     top view); the crop only informs the Stage-3a prompt writer. Style/lighting
-     from the brief are re-injected.
+   - **3a.5 — layout lock (blockout)** — from the detected boxes, the client
+     builds a coarse **eye-level 3D blockout** of the room with Three.js
+     (`lib/blockout.ts`): walls/floor extruded, a grey massing box per furniture
+     item (height by label prior), and coloured panels marking windows/doors on
+     the nearest wall, viewed from a doorway eye-level camera. Three.js is
+     dynamically imported (browser-only; code-split out of SSR). A small preview
+     ("Layout lock") is shown in `components/RoomPrompt.tsx`.
+   - **3b — render** — `action:"render"` is **image-to-image** when a blockout is
+     present: it sends the blockout as the input image to Nano Banana 2 with an
+     instruction to keep its exact viewpoint and wall/window/door/furniture
+     positions and only add realism → a photorealistic **eye-level interior** that
+     can't rearrange the layout (`components/RoomResult.tsx`). When no blockout is
+     available (detection/WebGL failed) it falls back to **text-to-image** from the
+     prompt alone. The top-down crop is still **never** fed to the renderer (doing
+     so dragged outputs back to a top view); only the eye-level blockout is.
+     Style/lighting from the brief are re-injected.
 6. **Regenerate** (vary the render) / **Edit prompt** / **Rewrite with AI**;
    every version is kept in `roomVersions[]` and is navigable.
 7. **Pick another room** and repeat.
@@ -66,9 +76,10 @@ Key principles: a global **design brief**, user-confirmed incremental
 generation, draw-a-box selection, a **transparent editable prompt** between
 selection and render, and regeneration as a first-class action that preserves
 the selected room. The overview is **axonometric**; rooms are **photorealistic
-eye-level interiors**, rendered **text-to-image** from a detailed,
-layout-enumerating prompt (the crop feeds only the prompt writer, which keeps
-the render from collapsing back to a top-down view).
+eye-level interiors**, rendered **image-to-image from an eye-level 3D blockout**
+built from the detected layout (the blockout locks the camera viewpoint and the
+wall/window/door/furniture positions so the render can't rearrange them); it
+falls back to **text-to-image** when no blockout is available.
 
 ## Tech stack
 
@@ -101,20 +112,25 @@ drops straight into `<img src>`.
 
 `/api/room` takes an `action`:
 - `"write"` → `lib/kieChat.ts` `writeRoomPrompt` (vision LLM) returns
-  `{ prompt }`. It runs a Gemini **spatial-extraction** pass first
+  `{ prompt, boxes }`. It runs a Gemini **spatial-extraction** pass first
   (`lib/spatial.ts`: bounding boxes → detected-layout string) to ground the
   prompt, then writes the interior prompt (falls back to a templated prompt if
-  the LLM call fails, so the user can always render).
-- `"render"` → `generateImage(roomRenderPrompt(prompt, variation, brief), [])`
-  returns `{ image }` — **text-to-image, no input image** (the top-down crop is
-  intentionally omitted so the render stays eye-level). Re-injects the brief's
-  style/lighting.
-- `"auto"` → write (from the crop) then render text-to-image in one call.
+  the LLM call fails, so the user can always render). The `boxes` are returned so
+  the client can build the eye-level blockout (`lib/blockout.ts`).
+- `"render"` → `generateImage(roomRenderPrompt(prompt, variation, brief,
+  hasBlockout), inputs)` returns `{ image }`. When the client sends a `blockout`
+  (eye-level 3D massing PNG), it is the lone `image_input` and the render is
+  **image-to-image** locked to that geometry; otherwise `inputs` is `[]` and it
+  degrades to **text-to-image**. Re-injects the brief's style/lighting.
+- `"auto"` → write (from the crop) then render (image-to-image if a `blockout`
+  was supplied, else text-to-image) in one call.
 
 The optional `reference` (the overview URL) is accepted by `write`/`auto` and
 **host-validated** via `lib/refs.ts` `isAllowedReference` (https + a kie.ai host)
 before being forwarded to the prompt writer for whole-home consistency. The
-`render` action takes no image.
+`blockout` (a base64 data URL) is accepted by `render`/`auto`, size-capped and
+data-URL-validated; if malformed it is dropped and the render falls back to
+text-to-image.
 
 ## Project structure
 
@@ -142,6 +158,7 @@ lib/
   kie.ts                # server-only kie.ai image client (upload + createTask + poll)
   kieChat.ts            # server-only kie.ai vision-LLM prompt writer (Stage 3a)
   spatial.ts            # Stage 3a spatial grounding: detect boxes → layout string
+  blockout.ts           # eye-level 3D blockout (Three.js) from boxes → render lock
   prompts.ts            # overview + prompt-writer system + room render templates
   styles.ts             # interior-design style presets + brief resolution
   kieBrowser.ts         # static build: browser-side kie.ai client (user key)

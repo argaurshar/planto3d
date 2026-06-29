@@ -109,19 +109,36 @@ export function promptWriterSystem(
  * constraints. The `brief` is re-injected so style/lighting anchor every render.
  * `variation` (incremented by Regenerate) nudges a different take.
  *
- * This is a TEXT-TO-IMAGE render: the renderer is driven by the detailed
- * eye-level interior prompt, NOT by the top-down crop image. Feeding the
- * top-down crop into the renderer is what dragged earlier outputs back to a top
- * view, so the crop is used only by the Stage-3a prompt writer; the render is
- * pure prompt → eye-level photo.
+ * Two modes:
+ *  - WITHOUT a blockout (`hasBlockout` false): pure TEXT-TO-IMAGE, driven by the
+ *    detailed eye-level prompt. Feeding the top-down crop here dragged earlier
+ *    outputs back to a top view, so no image is sent.
+ *  - WITH a blockout: IMAGE-TO-IMAGE. The caller sends a coarse eye-level 3D
+ *    massing of the room as the input image; this wrapper tells the model to
+ *    treat it as the exact structural/viewpoint reference and only add realism,
+ *    which LOCKS the layout instead of merely describing it.
  */
 export function roomRenderPrompt(
   interiorPrompt: string,
   variation: number,
   brief: DesignBrief,
+  hasBlockout = false,
 ): string {
   const style = resolveStyleDescriptor(brief);
+  const blockoutLead = hasBlockout
+    ? [
+        "The provided image is a rough 3D BLOCKOUT of this room from an eye-level",
+        "viewpoint: grey massing blocks for furniture, plain walls and floor, and",
+        "coloured panels marking window (light blue) and door (brown) openings.",
+        "Use it as the EXACT structural reference — keep its camera viewpoint, room",
+        "proportions, wall layout, window/door positions, and the placement and",
+        "footprint of every block. Replace each grey block with real furniture of",
+        "the matching type and each panel with a real window or door, but do NOT",
+        "move, add, remove or resize anything.",
+      ].join(" ")
+    : "";
   const base = [
+    blockoutLead,
     interiorPrompt.trim(),
     `Overall style: ${style}. Lighting: ${brief.lighting}.`,
     "Photorealistic architectural interior render, natural EYE-LEVEL perspective",
@@ -129,7 +146,9 @@ export function roomRenderPrompt(
     "Preserve the exact proportions and spatial arrangement described above; do",
     "not add, remove or rearrange any walls, windows, doors or furniture.",
     "No text, no watermark, no dimensions, no floor-plan lines, NOT a top-down view.",
-  ].join(" ");
+  ]
+    .filter(Boolean)
+    .join(" ");
   if (variation <= 0) return base;
   return [
     base,

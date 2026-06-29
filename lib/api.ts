@@ -1,4 +1,5 @@
 import type { DesignBrief, GenerateImageResponse, RoomPromptResponse, RoomType } from "./types";
+import type { SpatialBox } from "./spatial";
 import { overviewPrompt } from "./prompts";
 import {
   generateImageBrowser,
@@ -78,7 +79,7 @@ export async function requestRoomPrompt(
   brief: DesignBrief,
   roomType: RoomType,
   overviewUrl?: string,
-): Promise<string> {
+): Promise<{ prompt: string; boxes: SpatialBox[] }> {
   if (IS_STATIC) {
     return writeRoomPromptBrowser({
       cropDataUrl: roomDataUrl,
@@ -95,24 +96,30 @@ export async function requestRoomPrompt(
     roomType,
     reference: overviewUrl,
   });
-  return data.prompt;
+  return { prompt: data.prompt, boxes: data.boxes ?? [] };
 }
 
 /**
  * Stage 3b: render a photorealistic eye-level interior from the (possibly
- * edited) detailed prompt. This is TEXT-TO-IMAGE — no image is sent to the
- * renderer, because feeding the top-down crop dragged the output to a top view.
- * The crop is only used by the Stage-3a prompt writer.
+ * edited) detailed prompt.
+ *
+ * With a `blockoutDataUrl` (an eye-level 3D massing of the room) this is
+ * IMAGE-TO-IMAGE — the blockout fixes the camera viewpoint and the wall/window/
+ * door/furniture positions, so the render can't rearrange the layout. Without
+ * one it falls back to TEXT-TO-IMAGE (no image, to avoid the top-down crop
+ * dragging the output to a top view).
  */
 export async function requestRoomRender(
   prompt: string,
   variation: number,
   brief: DesignBrief,
+  blockoutDataUrl?: string,
 ): Promise<string> {
+  const hasBlockout = Boolean(blockoutDataUrl);
   if (IS_STATIC) {
     return generateImageBrowser(
-      roomRenderPrompt(prompt, variation, brief),
-      [],
+      roomRenderPrompt(prompt, variation, brief, hasBlockout),
+      hasBlockout ? [blockoutDataUrl!] : [],
       requireKey(),
       "room.png",
     );
@@ -122,6 +129,7 @@ export async function requestRoomRender(
     prompt,
     variation,
     brief,
+    blockout: blockoutDataUrl,
   });
   return data.image;
 }

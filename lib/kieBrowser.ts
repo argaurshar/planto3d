@@ -11,6 +11,7 @@
 
 import { promptWriterSystem, roomRenderPrompt } from "./prompts";
 import { SPATIAL_EXTRACTION_PROMPT, parseSpatialBoxes, describeLayout } from "./spatial";
+import type { SpatialBox } from "./spatial";
 import type { DesignBrief, RoomType } from "./types";
 
 const UPLOAD_URL = "https://kieai.redpandaai.co/api/file-base64-upload";
@@ -160,8 +161,11 @@ async function chatComplete(
   return json?.choices?.[0]?.message?.content?.trim() ?? "";
 }
 
-/** Best-effort spatial detection on the room crop → layout string ("" on failure). */
-async function detectLayoutBrowser(imageUrl: string, apiKey: string): Promise<string> {
+/** Best-effort spatial detection on the room crop → { layout, boxes } ([] on failure). */
+async function detectLayoutBrowser(
+  imageUrl: string,
+  apiKey: string,
+): Promise<{ layout: string; boxes: SpatialBox[] }> {
   try {
     const content = await chatComplete(
       SPATIAL_EXTRACTION_PROMPT,
@@ -171,13 +175,17 @@ async function detectLayoutBrowser(imageUrl: string, apiKey: string): Promise<st
       ],
       apiKey,
     );
-    return describeLayout(parseSpatialBoxes(content));
+    const boxes = parseSpatialBoxes(content);
+    return { layout: describeLayout(boxes), boxes };
   } catch {
-    return "";
+    return { layout: "", boxes: [] };
   }
 }
 
-/** Stage 3a in the browser: write an interior prompt from a room crop. */
+/**
+ * Stage 3a in the browser: write an interior prompt from a room crop, plus the
+ * detected boxes (for the eye-level blockout).
+ */
 export async function writeRoomPromptBrowser(args: {
   cropDataUrl: string;
   brief: DesignBrief;
@@ -185,9 +193,9 @@ export async function writeRoomPromptBrowser(args: {
   apiKey: string;
   /** Optional hosted overview URL for whole-home style consistency. */
   overviewUrl?: string;
-}): Promise<string> {
+}): Promise<{ prompt: string; boxes: SpatialBox[] }> {
   const imageUrl = await uploadBase64(args.cropDataUrl, args.apiKey, "room.png");
-  const layout = await detectLayoutBrowser(imageUrl, args.apiKey);
+  const { layout, boxes } = await detectLayoutBrowser(imageUrl, args.apiKey);
   const hasOverview = Boolean(args.overviewUrl);
 
   const userContent: ChatContent[] = [
@@ -207,7 +215,7 @@ export async function writeRoomPromptBrowser(args: {
     args.apiKey,
   );
   if (!content) throw new Error("Prompt generator returned no text.");
-  return content
+  const prompt = content
     .replace(/^```[a-z]*\s*/i, "")
     .replace(/\s*```$/i, "")
     .replace(/^(prompt|interior prompt)\s*[:\-]\s*/i, "")
@@ -215,6 +223,7 @@ export async function writeRoomPromptBrowser(args: {
     .replace(/["'""]+$/, "")
     .trim()
     .slice(0, 4000);
+  return { prompt, boxes };
 }
 
 // Re-exported so api.ts can build prompts identically to the server path.
