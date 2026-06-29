@@ -127,14 +127,19 @@ export function roomRenderPrompt(
   const style = resolveStyleDescriptor(brief);
   const blockoutLead = hasBlockout
     ? [
-        "The provided image is a rough 3D BLOCKOUT of this room from an eye-level",
-        "viewpoint: grey massing blocks for furniture, plain walls and floor, and",
-        "coloured panels marking window (light blue) and door (brown) openings.",
-        "Use it as the EXACT structural reference — keep its camera viewpoint, room",
-        "proportions, wall layout, window/door positions, and the placement and",
-        "footprint of every block. Replace each grey block with real furniture of",
-        "the matching type and each panel with a real window or door, but do NOT",
-        "move, add, remove or resize anything.",
+        "The provided image is a COLOUR-CODED 3D massing map of this room from an",
+        "eye-level viewpoint. Each coloured block marks the exact position, size and",
+        "orientation of one item; the colour gives its type:",
+        "BLUE = bed, GREEN = seating (sofa/chair), ORANGE = storage (wardrobe/",
+        "cabinet/dresser/TV unit), AMBER/YELLOW = table/desk/nightstand, TEAL =",
+        "bathroom fixture (sink/bath/toilet), PURPLE = other furniture, light-slate =",
+        "rug; CYAN panel = window, BROWN panel = door, light-grey = walls, dark-grey",
+        "= floor. Reproduce EVERY block as a real, photorealistic furniture piece of",
+        "that exact type at that exact position, size and count, and keep the camera",
+        "viewpoint, room proportions and wall/window/door layout. Do NOT move, add,",
+        "remove, resize or recolour anything; do not invent furniture that has no",
+        "block. Render real materials and lighting — the output must NOT show flat",
+        "colours or blocks.",
       ].join(" ")
     : "";
   const base = [
