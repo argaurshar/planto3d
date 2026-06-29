@@ -2,7 +2,12 @@ import "server-only";
 
 import { KieError, requireApiKey, mapKieStatus, uploadBase64 } from "./kie";
 import { promptWriterSystem } from "./prompts";
-import { SPATIAL_EXTRACTION_PROMPT, parseSpatialBoxes, describeLayout } from "./spatial";
+import {
+  SPATIAL_EXTRACTION_PROMPT,
+  SPATIAL_RETRY_PROMPT,
+  parseSpatialBoxes,
+  describeLayout,
+} from "./spatial";
 import type { SpatialBox } from "./spatial";
 import type { DesignBrief, RoomType } from "./types";
 
@@ -16,9 +21,11 @@ import type { DesignBrief, RoomType } from "./types";
  */
 
 const CHAT_MODEL = process.env.KIE_CHAT_MODEL || "gemini-2.5-flash";
+// Detection benefits from a stronger spatial model than the prompt writer.
+const DETECT_MODEL = process.env.KIE_DETECT_MODEL || "gemini-2.5-pro";
 
-function chatUrl(): string {
-  return `https://api.kie.ai/${CHAT_MODEL}/v1/chat/completions`;
+function chatUrl(model: string): string {
+  return `https://api.kie.ai/${model}/v1/chat/completions`;
 }
 
 interface ChatResponse {
@@ -34,17 +41,18 @@ async function chatComplete(
   system: string,
   userContent: ChatContent[],
   key: string,
+  model: string = CHAT_MODEL,
 ): Promise<string> {
   let res: Response;
   try {
-    res = await fetch(chatUrl(), {
+    res = await fetch(chatUrl(model), {
       method: "POST",
       headers: {
         Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: CHAT_MODEL,
+        model,
         stream: false,
         messages: [
           { role: "system", content: system },
@@ -75,20 +83,31 @@ async function chatComplete(
  * layout string (for the prompt). Best-effort — never throws (the prompt writer
  * degrades to today's behavior on failure).
  */
+async function detectOnce(imageUrl: string, key: string, system: string): Promise<SpatialBox[]> {
+  const content = await chatComplete(
+    system,
+    [
+      { type: "text", text: "Detect the objects in this room." },
+      { type: "image_url", image_url: { url: imageUrl } },
+    ],
+    key,
+    DETECT_MODEL,
+  );
+  return parseSpatialBoxes(content);
+}
+
 async function detectLayout(
   imageUrl: string,
   key: string,
 ): Promise<{ layout: string; boxes: SpatialBox[] }> {
   try {
-    const content = await chatComplete(
-      SPATIAL_EXTRACTION_PROMPT,
-      [
-        { type: "text", text: "Detect the objects in this room." },
-        { type: "image_url", image_url: { url: imageUrl } },
-      ],
-      key,
-    );
-    const boxes = parseSpatialBoxes(content);
+    let boxes = await detectOnce(imageUrl, key, SPATIAL_EXTRACTION_PROMPT);
+    // A furnished room with <2 detections almost always means under-detection;
+    // try once more with a more forceful instruction and keep the better result.
+    if (boxes.length < 2) {
+      const retry = await detectOnce(imageUrl, key, SPATIAL_RETRY_PROMPT).catch(() => []);
+      if (retry.length > boxes.length) boxes = retry;
+    }
     return { layout: describeLayout(boxes), boxes };
   } catch {
     return { layout: "", boxes: [] };

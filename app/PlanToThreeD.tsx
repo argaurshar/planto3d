@@ -9,6 +9,7 @@ import RoomPrompt from "./components/RoomPrompt";
 import RoomResult from "./components/RoomResult";
 import { requestOverview, requestRoomPrompt, requestRoomRender } from "@/lib/api";
 import { buildBlockoutDataUrl } from "@/lib/blockout";
+import { summarizeLabels } from "@/lib/spatial";
 import { cropToDataUrl, type Rect } from "@/lib/crop";
 import { DEFAULT_BRIEF } from "@/lib/styles";
 import type { DesignBrief, RoomType } from "@/lib/types";
@@ -20,6 +21,8 @@ type Stage = "idle" | "writing" | "rendering";
 export type LayoutLock = {
   status: "none" | "locked" | "no-webgl" | "no-objects";
   count: number;
+  /** Human summary of detected labels, e.g. "bed, 2 nightstands, window". */
+  summary: string;
 };
 
 interface State {
@@ -80,7 +83,7 @@ const initialState: State = {
   cropDataUrl: null,
   cropAspect: 1,
   blockoutDataUrl: null,
-  layoutLock: { status: "none", count: 0 },
+  layoutLock: { status: "none", count: 0, summary: "" },
   roomType: "auto",
   roomStyleId: DEFAULT_BRIEF.styleId,
   roomPrompt: "",
@@ -122,7 +125,7 @@ function reducer(state: State, action: Action): State {
         cropDataUrl: action.dataUrl,
         cropAspect: action.aspect,
         blockoutDataUrl: null,
-        layoutLock: { status: "none", count: 0 },
+        layoutLock: { status: "none", count: 0, summary: "" },
         roomStyleId: state.brief.styleId,
         roomPrompt: "",
         roomVersions: [],
@@ -171,7 +174,7 @@ function reducer(state: State, action: Action): State {
         step: "select",
         cropDataUrl: null,
         blockoutDataUrl: null,
-        layoutLock: { status: "none", count: 0 },
+        layoutLock: { status: "none", count: 0, summary: "" },
         roomPrompt: "",
         roomVersions: [],
         currentVersion: 0,
@@ -246,6 +249,7 @@ export default function PlanToThreeD() {
       const lock: LayoutLock = {
         count: boxes.length,
         status: boxes.length === 0 ? "no-objects" : blockout ? "locked" : "no-webgl",
+        summary: summarizeLabels(boxes),
       };
       if (typeof console !== "undefined") {
         console.debug("[voxa] layout lock:", lock.status, "boxes:", boxes.length, "blockout:", Boolean(blockout));
@@ -254,7 +258,7 @@ export default function PlanToThreeD() {
     } catch (err) {
       if (isStale(id)) return;
       // Leave the box editable so the user can still write a prompt by hand.
-      dispatch({ type: "PROMPT_DONE", prompt: "", blockout: null, lock: { status: "none", count: 0 } });
+      dispatch({ type: "PROMPT_DONE", prompt: "", blockout: null, lock: { status: "none", count: 0, summary: "" } });
       dispatch({ type: "ERROR", message: message(err) });
     }
   }

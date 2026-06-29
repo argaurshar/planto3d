@@ -85,14 +85,18 @@ falls back to **text-to-image** when no blockout is available.
 
 - **Next.js** (App Router) + **React 19** + **TypeScript** (strict).
 - **Tailwind CSS** for styling.
-- **kie.ai**, server-side only. Two models:
+- **kie.ai**, server-side only. Models:
   - **`nano-banana-2`** image model via the **job API** (`lib/kie.ts`).
   - a **vision chat model** (`gemini-2.5-flash`) via the **OpenAI-compatible
     chat endpoint** for the prompt-writer (`lib/kieChat.ts`).
+  - a **detection model** (`gemini-2.5-pro`) for the spatial-extraction pass that
+    builds the blockout — stronger spatial reasoning than flash, with a
+    retry-on-too-few guard (`lib/spatial.ts` / `lib/kieChat.ts`).
 - The kie.ai API key (`KIE_API_KEY`) is read **only** in server code
   (`lib/kie.ts` / `lib/kieChat.ts`, which import `server-only`); it is never
   bundled into the client. Overrides: `KIE_IMAGE_MODEL`, `KIE_IMAGE_RESOLUTION`
-  (`1K`|`2K`|`4K`, default `1K`), `KIE_CHAT_MODEL` (default `gemini-2.5-flash`).
+  (`1K`|`2K`|`4K`, default `1K`), `KIE_CHAT_MODEL` (default `gemini-2.5-flash`),
+  `KIE_DETECT_MODEL` (default `gemini-2.5-pro`).
 
 ### kie.ai job flow (in `lib/kie.ts`)
 

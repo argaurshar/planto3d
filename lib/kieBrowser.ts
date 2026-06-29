@@ -10,7 +10,12 @@
 // will fail with a network/CORS error — use the server build (Vercel) instead.
 
 import { promptWriterSystem, roomRenderPrompt } from "./prompts";
-import { SPATIAL_EXTRACTION_PROMPT, parseSpatialBoxes, describeLayout } from "./spatial";
+import {
+  SPATIAL_EXTRACTION_PROMPT,
+  SPATIAL_RETRY_PROMPT,
+  parseSpatialBoxes,
+  describeLayout,
+} from "./spatial";
 import type { SpatialBox } from "./spatial";
 import type { DesignBrief, RoomType } from "./types";
 
@@ -26,6 +31,9 @@ function imageResolution(): string {
 }
 function chatModel(): string {
   return process.env.NEXT_PUBLIC_KIE_CHAT_MODEL || "gemini-2.5-flash";
+}
+function detectModel(): string {
+  return process.env.NEXT_PUBLIC_KIE_DETECT_MODEL || "gemini-2.5-pro";
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -139,12 +147,13 @@ async function chatComplete(
   system: string,
   userContent: ChatContent[],
   apiKey: string,
+  model: string = chatModel(),
 ): Promise<string> {
-  const res = await fetch(`https://api.kie.ai/${chatModel()}/v1/chat/completions`, {
+  const res = await fetch(`https://api.kie.ai/${model}/v1/chat/completions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: chatModel(),
+      model,
       stream: false,
       messages: [
         { role: "system", content: system },
@@ -161,30 +170,44 @@ async function chatComplete(
   return json?.choices?.[0]?.message?.content?.trim() ?? "";
 }
 
+async function detectOnceBrowser(
+  imageUrl: string,
+  apiKey: string,
+  system: string,
+): Promise<SpatialBox[]> {
+  const content = await chatComplete(
+    system,
+    [
+      { type: "text", text: "Detect the objects in this room." },
+      { type: "image_url", image_url: { url: imageUrl } },
+    ],
+    apiKey,
+    detectModel(),
+  );
+  const boxes = parseSpatialBoxes(content);
+  if (typeof console !== "undefined") {
+    console.debug(
+      "[voxa] detection: reply",
+      (content || "").length,
+      "chars →",
+      boxes.length,
+      "boxes",
+      boxes.length ? `(${boxes.map((b) => b.label).join(", ")})` : "",
+    );
+  }
+  return boxes;
+}
+
 /** Best-effort spatial detection on the room crop → { layout, boxes } ([] on failure). */
 async function detectLayoutBrowser(
   imageUrl: string,
   apiKey: string,
 ): Promise<{ layout: string; boxes: SpatialBox[] }> {
   try {
-    const content = await chatComplete(
-      SPATIAL_EXTRACTION_PROMPT,
-      [
-        { type: "text", text: "Detect the objects in this room." },
-        { type: "image_url", image_url: { url: imageUrl } },
-      ],
-      apiKey,
-    );
-    const boxes = parseSpatialBoxes(content);
-    if (typeof console !== "undefined") {
-      console.debug(
-        "[voxa] detection: reply",
-        (content || "").length,
-        "chars →",
-        boxes.length,
-        "boxes",
-        boxes.length ? `(${boxes.map((b) => b.label).join(", ")})` : "",
-      );
+    let boxes = await detectOnceBrowser(imageUrl, apiKey, SPATIAL_EXTRACTION_PROMPT);
+    if (boxes.length < 2) {
+      const retry = await detectOnceBrowser(imageUrl, apiKey, SPATIAL_RETRY_PROMPT).catch(() => []);
+      if (retry.length > boxes.length) boxes = retry;
     }
     return { layout: describeLayout(boxes), boxes };
   } catch (e) {
