@@ -1,7 +1,7 @@
 import "server-only";
 
 import { KieError, requireApiKey, mapKieStatus, uploadBase64 } from "./kie";
-import { promptWriterSystem } from "./prompts";
+import { promptWriterSystem, layoutVerifierSystem, parseVerifierReply } from "./prompts";
 import {
   SPATIAL_EXTRACTION_PROMPT,
   SPATIAL_RETRY_PROMPT,
@@ -150,6 +150,29 @@ export async function writeRoomPrompt(args: {
     throw new KieError("Prompt generator returned no text.");
   }
   return { prompt: sanitizePrompt(content), boxes };
+}
+
+/**
+ * Verify a finished render against the expected layout with the vision LLM.
+ * Best-effort: returns null when the check can't run (caller skips verification).
+ */
+export async function verifyRenderLayout(
+  imageUrl: string,
+  expectedLayout: string,
+): Promise<{ matches: boolean; problems: string[] } | null> {
+  try {
+    const content = await chatComplete(
+      layoutVerifierSystem(),
+      [
+        { type: "text", text: `EXPECTED LAYOUT:\n${expectedLayout}` },
+        { type: "image_url", image_url: { url: imageUrl } },
+      ],
+      requireApiKey(),
+    );
+    return parseVerifierReply(content);
+  } catch {
+    return null;
+  }
 }
 
 /**

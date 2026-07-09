@@ -163,6 +163,93 @@ export function roomRenderPrompt(
   ].join(" ");
 }
 
+/** Trim to ~maxChars at a sentence boundary so prompts stay within model limits. */
+function capAtSentence(text: string, maxChars: number): string {
+  const t = text.trim();
+  if (t.length <= maxChars) return t;
+  const cut = t.slice(0, maxChars);
+  const lastStop = cut.lastIndexOf(". ");
+  return lastStop > maxChars * 0.5 ? cut.slice(0, lastStop + 1) : cut;
+}
+
+/**
+ * Stage 3b render prompt for FLUX.1 Kontext — a structure-preserving EDIT model:
+ * the blockout image fixes the composition, so the prompt only has to say what
+ * to turn each coloured block into. Kontext prompts should stay short (~512
+ * tokens), so the interior description is capped; the geometry lives in the
+ * image, not the text. `corrections` (from the verify pass) are prepended on a
+ * retry.
+ */
+export function kontextRenderPrompt(
+  interiorPrompt: string,
+  brief: DesignBrief,
+  corrections?: string[],
+): string {
+  const style = resolveStyleDescriptor(brief);
+  const fix =
+    corrections && corrections.length
+      ? `IMPORTANT — a previous attempt got these wrong, fix exactly these and change nothing else: ${corrections.join("; ")}. `
+      : "";
+  return [
+    fix,
+    "Turn this colour-coded 3D room mock-up into a photorealistic interior",
+    "photograph taken from this exact camera position. Keep every wall, the",
+    "window and door positions, and the position, size and count of every",
+    "coloured block exactly as shown. Replace each block with real furniture by",
+    "colour: blue = bed, green = seating, orange = wardrobe/storage, yellow =",
+    "table/desk/nightstand, teal = bathroom fixture, purple = other furniture,",
+    "light-slate = rug; cyan wall panel = window with daylight, brown wall panel",
+    "= door. Do not move, add, remove or resize anything; no flat colours or",
+    "blocks may remain in the output.",
+    capAtSentence(interiorPrompt, 700),
+    `Style: ${style}. Lighting: ${brief.lighting}. Photorealistic materials and`,
+    "natural light, high detail.",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/**
+ * Vision-LLM system prompt that checks a finished render against the detected
+ * layout. Must answer with strict JSON so the caller can act on it.
+ */
+export function layoutVerifierSystem(): string {
+  return [
+    "You are a strict architectural layout verifier. You are given an EXPECTED",
+    "LAYOUT description of a room and a rendered interior photo. Check whether",
+    "the photo matches the layout: the count and placement of each furniture",
+    "piece, which wall the window(s) are on, and where the door is. Judge only",
+    "coarse geometry (counts + which wall/zone), not style or materials.",
+    'Respond with ONLY this JSON, no prose: {"matches": true|false,',
+    '"problems": ["short description of each mismatch"]} — at most 4 problems,',
+    "each under 15 words. If the photo matches, problems must be [].",
+  ].join(" ");
+}
+
+/** Parse the verifier's JSON reply; null on anything malformed (skip the check). */
+export function parseVerifierReply(
+  content: string,
+): { matches: boolean; problems: string[] } | null {
+  if (!content) return null;
+  const text = content.replace(/^```[a-z]*\s*/i, "").replace(/\s*```$/i, "");
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end <= start) return null;
+  try {
+    const parsed = JSON.parse(text.slice(start, end + 1)) as {
+      matches?: unknown;
+      problems?: unknown;
+    };
+    if (typeof parsed.matches !== "boolean") return null;
+    const problems = Array.isArray(parsed.problems)
+      ? parsed.problems.filter((p): p is string => typeof p === "string").slice(0, 4)
+      : [];
+    return { matches: parsed.matches, problems };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Fallback Stage 3a prompt used when the LLM prompt-writer is unavailable, so
  * the user can still render. Templated from the brief + room type.

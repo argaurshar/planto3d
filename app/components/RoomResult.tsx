@@ -6,6 +6,8 @@ import type { LayoutLock } from "../PlanToThreeD";
 interface Props {
   cropDataUrl: string | null;
   layoutLock: LayoutLock;
+  /** Latest render's layout verification (true/false; null = not checked). */
+  verified: boolean | null;
   versions: string[];
   currentIndex: number;
   loading: boolean;
@@ -21,6 +23,7 @@ interface Props {
 export default function RoomResult({
   cropDataUrl,
   layoutLock,
+  verified,
   versions,
   currentIndex,
   loading,
@@ -61,6 +64,19 @@ export default function RoomResult({
                     Prompt-only
                   </span>
                 ))}
+              {current && verified === true && (
+                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-300">
+                  Verified ✓
+                </span>
+              )}
+              {current && verified === false && (
+                <span
+                  className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300"
+                  title="The automatic layout check still found mismatches after a retry — compare against the crop and Regenerate if needed."
+                >
+                  Check failed
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-3">
               {versions.length > 0 && (

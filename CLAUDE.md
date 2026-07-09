@@ -59,15 +59,20 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
      the nearest wall, viewed from a doorway eye-level camera. Three.js is
      dynamically imported (browser-only; code-split out of SSR). A small preview
      ("Layout lock") is shown in `components/RoomPrompt.tsx`.
-   - **3b — render** — `action:"render"` is **image-to-image** when a blockout is
-     present: it sends the blockout as the input image to Nano Banana 2 with an
-     instruction to keep its exact viewpoint and wall/window/door/furniture
-     positions and only add realism → a photorealistic **eye-level interior** that
-     can't rearrange the layout (`components/RoomResult.tsx`). When no blockout is
-     available (detection/WebGL failed) it falls back to **text-to-image** from the
-     prompt alone. The top-down crop is still **never** fed to the renderer (doing
-     so dragged outputs back to a top view); only the eye-level blockout is.
-     Style/lighting from the brief are re-injected.
+   - **3b — render** — when a blockout is present, `action:"render"` renders via
+     **FLUX.1 Kontext** (`flux-kontext-max`, kie.ai's structure-preserving edit
+     API): the colour-coded blockout is the input image and the prompt carries a
+     colour→furniture legend, so the composition is enforced by the model's own
+     design rather than soft instruction → a photorealistic **eye-level interior**
+     (`components/RoomResult.tsx`).
+   - **3c — verify & retry** — the finished render is checked by the vision LLM
+     against the detected layout (counts + which wall for each item, window/door
+     placement). On mismatch it re-renders ONCE with the verifier's corrections,
+     then reports the result as a **Verified ✓ / Check failed** badge. Fallbacks:
+     Kontext unavailable → nano-banana image-to-image from the blockout; no
+     blockout at all (detection/WebGL failed) → **text-to-image**. The top-down
+     crop is still **never** fed to the renderer. Style/lighting from the brief
+     are re-injected.
 6. **Regenerate** (vary the render) / **Edit prompt** / **Rewrite with AI**;
    every version is kept in `roomVersions[]` and is navigable.
 7. **Pick another room** and repeat.
@@ -86,9 +91,16 @@ falls back to **text-to-image** when no blockout is available.
 - **Next.js** (App Router) + **React 19** + **TypeScript** (strict).
 - **Tailwind CSS** for styling.
 - **kie.ai**, server-side only. Models:
-  - **`nano-banana-2`** image model via the **job API** (`lib/kie.ts`).
+  - **`flux-kontext-max`** (FLUX.1 Kontext) via kie.ai's dedicated Kontext API
+    (`/api/v1/flux/kontext/generate` + `record-info`) — a **structure-preserving
+    edit model** used for the layout-locked room render: the blockout image
+    fixes the composition, the prompt says what to turn each block into.
+  - **`nano-banana-2`** image model via the **job API** (`lib/kie.ts`) — the
+    overview render + the room-render fallback when Kontext/blockout is
+    unavailable.
   - a **vision chat model** (`gemini-2.5-flash`) via the **OpenAI-compatible
-    chat endpoint** for the prompt-writer (`lib/kieChat.ts`).
+    chat endpoint** for the prompt-writer and the post-render **layout
+    verifier** (`lib/kieChat.ts`).
   - a **detection model** (`gemini-2.5-pro`) for the spatial-extraction pass that
     builds the blockout — stronger spatial reasoning than flash, with a
     retry-on-too-few guard (`lib/spatial.ts` / `lib/kieChat.ts`).
@@ -96,7 +108,8 @@ falls back to **text-to-image** when no blockout is available.
   (`lib/kie.ts` / `lib/kieChat.ts`, which import `server-only`); it is never
   bundled into the client. Overrides: `KIE_IMAGE_MODEL`, `KIE_IMAGE_RESOLUTION`
   (`1K`|`2K`|`4K`, default `1K`), `KIE_CHAT_MODEL` (default `gemini-2.5-flash`),
-  `KIE_DETECT_MODEL` (default `gemini-2.5-pro`).
+  `KIE_DETECT_MODEL` (default `gemini-2.5-pro`), `KIE_KONTEXT_MODEL` (default
+  `flux-kontext-max`).
 
 ### kie.ai job flow (in `lib/kie.ts`)
 
@@ -121,13 +134,13 @@ drops straight into `<img src>`.
   prompt, then writes the interior prompt (falls back to a templated prompt if
   the LLM call fails, so the user can always render). The `boxes` are returned so
   the client can build the eye-level blockout (`lib/blockout.ts`).
-- `"render"` → `generateImage(roomRenderPrompt(prompt, variation, brief,
-  hasBlockout), inputs)` returns `{ image }`. When the client sends a `blockout`
-  (eye-level 3D massing PNG), it is the lone `image_input` and the render is
-  **image-to-image** locked to that geometry; otherwise `inputs` is `[]` and it
-  degrades to **text-to-image**. Re-injects the brief's style/lighting.
-- `"auto"` → write (from the crop) then render (image-to-image if a `blockout`
-  was supplied, else text-to-image) in one call.
+- `"render"` → with a `blockout` (colour-coded eye-level massing PNG) it runs
+  `renderLocked`: **FLUX.1 Kontext** edit from the blockout
+  (`generateKontextImage`, `kontextRenderPrompt`), then `verifyRenderLayout`
+  (vision check vs the `layout` text) with ONE corrective retry → returns
+  `{ image, verified? }`. Kontext failure falls back to nano-banana
+  image-to-image from the blockout; no blockout → **text-to-image**.
+- `"auto"` → write (from the crop) then the same render path in one call.
 
 The optional `reference` (the overview URL) is accepted by `write`/`auto` and
 **host-validated** via `lib/refs.ts` `isAllowedReference` (https + a kie.ai host)

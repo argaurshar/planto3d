@@ -13,10 +13,14 @@ import "server-only";
 
 const MODEL = process.env.KIE_IMAGE_MODEL || "nano-banana-2";
 const RESOLUTION = process.env.KIE_IMAGE_RESOLUTION || "1K";
+// Structure-preserving edit model used for the blockout → photoreal render.
+const KONTEXT_MODEL = process.env.KIE_KONTEXT_MODEL || "flux-kontext-max";
 
 const UPLOAD_URL = "https://kieai.redpandaai.co/api/file-base64-upload";
 const CREATE_TASK_URL = "https://api.kie.ai/api/v1/jobs/createTask";
 const RECORD_INFO_URL = "https://api.kie.ai/api/v1/jobs/recordInfo";
+const KONTEXT_GENERATE_URL = "https://api.kie.ai/api/v1/flux/kontext/generate";
+const KONTEXT_RECORD_URL = "https://api.kie.ai/api/v1/flux/kontext/record-info";
 
 /** Error carrying an HTTP status so routes can map it to a clean response. */
 export class KieError extends Error {
@@ -266,4 +270,97 @@ export async function generateImage(
   const taskId = await createTask(prompt, imageUrls);
   const imageUrl = await pollTask(taskId);
   return { imageUrl };
+}
+
+/**
+ * Pull the first plausible image URL out of a kie.ai kontext record-info
+ * response, whatever the exact field name is (resultImageUrl / resultUrls /
+ * nested response object). Prefers URLs that look like images.
+ */
+export function extractImageUrl(payload: unknown): string | null {
+  let text: string;
+  try {
+    text = JSON.stringify(payload);
+  } catch {
+    return null;
+  }
+  const urls = text.match(/https?:\/\/[^"\\\s]+/g) ?? [];
+  const image = urls.find((u) => /\.(png|jpe?g|webp)(\?|$)/i.test(u));
+  return image ?? urls[0] ?? null;
+}
+
+/**
+ * Render via FLUX.1 Kontext (kie.ai's dedicated structure-preserving edit API):
+ * the `input` image (our eye-level blockout) fixes the composition and the
+ * prompt describes what to turn it into. Same async pattern: generate → poll.
+ */
+export async function generateKontextImage(
+  prompt: string,
+  input: string,
+  fileName = "blockout.png",
+): Promise<{ imageUrl: string }> {
+  const key = getApiKey();
+  const inputImage = await toHostedUrl(input, fileName);
+
+  let res: Response;
+  try {
+    res = await fetch(KONTEXT_GENERATE_URL, {
+      method: "POST",
+      headers: authHeaders(key),
+      body: JSON.stringify({
+        prompt,
+        inputImage,
+        model: KONTEXT_MODEL,
+        aspectRatio: "4:3",
+        outputFormat: "png",
+        enableTranslation: false,
+      }),
+    });
+  } catch (err) {
+    throw new KieError(
+      `Failed to reach kie.ai kontext endpoint: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  const json = (await res.json().catch(() => null)) as
+    | { code?: number; msg?: string; data?: { taskId?: string } }
+    | null;
+  if (!res.ok || !json || (json.code && json.code !== 200) || !json.data?.taskId) {
+    const code = json?.code ?? res.status;
+    throw new KieError(
+      messageForCode(code, json?.msg || `Kontext generate failed (HTTP ${res.status}).`),
+      code >= 400 && code < 600 ? code : 502,
+    );
+  }
+
+  const taskId = json.data.taskId;
+  const deadline = Date.now() + 110_000;
+  while (Date.now() < deadline) {
+    let poll: Response;
+    try {
+      poll = await fetch(`${KONTEXT_RECORD_URL}?taskId=${encodeURIComponent(taskId)}`, {
+        headers: { Authorization: `Bearer ${key}` },
+      });
+    } catch {
+      await sleep(2500);
+      continue;
+    }
+    const info = (await poll.json().catch(() => null)) as
+      | { data?: { successFlag?: number; errorMessage?: string | null; response?: unknown } }
+      | null;
+    const d = info?.data;
+    if (d) {
+      // successFlag: 0/undefined = generating, 1 = success, 2/3 = failed.
+      if (d.successFlag === 1) {
+        const url = extractImageUrl(d.response ?? d);
+        if (!url) throw new KieError("Kontext task succeeded but returned no image URL.");
+        return { imageUrl: url };
+      }
+      if (d.successFlag === 2 || d.successFlag === 3) {
+        throw new KieError(d.errorMessage || "Kontext generation failed at kie.ai.");
+      }
+    }
+    await sleep(2500);
+  }
+  throw new KieError("Kontext generation timed out. Please try again.", 504);
 }

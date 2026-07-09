@@ -9,7 +9,7 @@ import RoomPrompt from "./components/RoomPrompt";
 import RoomResult from "./components/RoomResult";
 import { requestOverview, requestRoomPrompt, requestRoomRender } from "@/lib/api";
 import { buildBlockoutDataUrl } from "@/lib/blockout";
-import { summarizeLabels } from "@/lib/spatial";
+import { summarizeLabels, describeLayout } from "@/lib/spatial";
 import { cropToDataUrl, type Rect } from "@/lib/crop";
 import { DEFAULT_BRIEF } from "@/lib/styles";
 import type { DesignBrief, RoomType } from "@/lib/types";
@@ -37,6 +37,10 @@ interface State {
   blockoutDataUrl: string | null;
   /** Status of the layout lock (detected object count + why it's on/off). */
   layoutLock: LayoutLock;
+  /** Detected-layout description used to verify renders (from describeLayout). */
+  layoutText: string;
+  /** Latest render's layout verification (true/false; null = not checked). */
+  verified: boolean | null;
   roomType: RoomType;
   /** Per-room style override (defaults to the brief's style). */
   roomStyleId: string;
@@ -63,12 +67,12 @@ type Action =
   | { type: "SET_ROOM_STYLE"; styleId: string }
   | { type: "BEGIN_SETUP"; dataUrl: string; aspect: number }
   | { type: "START_WRITE" }
-  | { type: "PROMPT_DONE"; prompt: string; blockout: string | null; lock: LayoutLock }
+  | { type: "PROMPT_DONE"; prompt: string; blockout: string | null; lock: LayoutLock; layout: string }
   | { type: "REWRITE" }
   | { type: "EDIT_PROMPT"; value: string }
   | { type: "RENDER_START" }
   | { type: "REGEN_START" }
-  | { type: "ROOM_DONE"; dataUrl: string }
+  | { type: "ROOM_DONE"; dataUrl: string; verified?: boolean }
   | { type: "SET_VERSION"; index: number }
   | { type: "EDIT_PROMPT_STEP" }
   | { type: "PICK_ANOTHER" }
@@ -84,6 +88,8 @@ const initialState: State = {
   cropAspect: 1,
   blockoutDataUrl: null,
   layoutLock: { status: "none", count: 0, summary: "" },
+  layoutText: "",
+  verified: null,
   roomType: "auto",
   roomStyleId: DEFAULT_BRIEF.styleId,
   roomPrompt: "",
@@ -126,6 +132,8 @@ function reducer(state: State, action: Action): State {
         cropAspect: action.aspect,
         blockoutDataUrl: null,
         layoutLock: { status: "none", count: 0, summary: "" },
+        layoutText: "",
+        verified: null,
         roomStyleId: state.brief.styleId,
         roomPrompt: "",
         roomVersions: [],
@@ -143,6 +151,7 @@ function reducer(state: State, action: Action): State {
         roomPrompt: action.prompt,
         blockoutDataUrl: action.blockout,
         layoutLock: action.lock,
+        layoutText: action.layout,
       };
     case "REWRITE":
       return { ...state, stage: "writing", error: null };
@@ -162,6 +171,7 @@ function reducer(state: State, action: Action): State {
         roomVersions,
         currentVersion: roomVersions.length - 1,
         variation: state.variation + 1,
+        verified: action.verified ?? null,
       };
     }
     case "SET_VERSION":
@@ -175,6 +185,8 @@ function reducer(state: State, action: Action): State {
         cropDataUrl: null,
         blockoutDataUrl: null,
         layoutLock: { status: "none", count: 0, summary: "" },
+        layoutText: "",
+        verified: null,
         roomPrompt: "",
         roomVersions: [],
         currentVersion: 0,
@@ -254,11 +266,17 @@ export default function PlanToThreeD() {
       if (typeof console !== "undefined") {
         console.debug("[voxa] layout lock:", lock.status, "boxes:", boxes.length, "blockout:", Boolean(blockout));
       }
-      dispatch({ type: "PROMPT_DONE", prompt, blockout, lock });
+      dispatch({ type: "PROMPT_DONE", prompt, blockout, lock, layout: describeLayout(boxes) });
     } catch (err) {
       if (isStale(id)) return;
       // Leave the box editable so the user can still write a prompt by hand.
-      dispatch({ type: "PROMPT_DONE", prompt: "", blockout: null, lock: { status: "none", count: 0, summary: "" } });
+      dispatch({
+        type: "PROMPT_DONE",
+        prompt: "",
+        blockout: null,
+        lock: { status: "none", count: 0, summary: "" },
+        layout: "",
+      });
       dispatch({ type: "ERROR", message: message(err) });
     }
   }
@@ -300,14 +318,15 @@ export default function PlanToThreeD() {
     const id = nextReq();
     dispatch({ type: "RENDER_START" });
     try {
-      const image = await requestRoomRender(
+      const { image, verified } = await requestRoomRender(
         state.roomPrompt,
         state.variation,
         effectiveBrief(),
         state.blockoutDataUrl ?? undefined,
+        state.layoutText || undefined,
       );
       if (isStale(id)) return;
-      dispatch({ type: "ROOM_DONE", dataUrl: image });
+      dispatch({ type: "ROOM_DONE", dataUrl: image, verified });
     } catch (err) {
       if (isStale(id)) return;
       dispatch({ type: "ERROR", message: message(err) });
@@ -319,14 +338,15 @@ export default function PlanToThreeD() {
     const id = nextReq();
     dispatch({ type: "REGEN_START" });
     try {
-      const image = await requestRoomRender(
+      const { image, verified } = await requestRoomRender(
         state.roomPrompt,
         state.variation,
         effectiveBrief(),
         state.blockoutDataUrl ?? undefined,
+        state.layoutText || undefined,
       );
       if (isStale(id)) return;
-      dispatch({ type: "ROOM_DONE", dataUrl: image });
+      dispatch({ type: "ROOM_DONE", dataUrl: image, verified });
     } catch (err) {
       if (isStale(id)) return;
       dispatch({ type: "ERROR", message: message(err) });
@@ -412,6 +432,7 @@ export default function PlanToThreeD() {
         <RoomResult
           cropDataUrl={state.cropDataUrl}
           layoutLock={state.layoutLock}
+          verified={state.verified}
           versions={state.roomVersions}
           currentIndex={state.currentVersion}
           loading={state.loading}

@@ -1,8 +1,10 @@
 import type { DesignBrief, GenerateImageResponse, RoomPromptResponse, RoomType } from "./types";
 import type { SpatialBox } from "./spatial";
-import { overviewPrompt } from "./prompts";
+import { overviewPrompt, kontextRenderPrompt } from "./prompts";
 import {
   generateImageBrowser,
+  generateKontextImageBrowser,
+  verifyRenderLayoutBrowser,
   writeRoomPromptBrowser,
   roomRenderPrompt,
 } from "./kieBrowser";
@@ -99,30 +101,72 @@ export async function requestRoomPrompt(
   return { prompt: data.prompt, boxes: data.boxes ?? [] };
 }
 
+export interface RoomRenderResult {
+  image: string;
+  /** true = layout check passed; false = still off after a retry; undefined = not checked. */
+  verified?: boolean;
+}
+
 /**
  * Stage 3b: render a photorealistic eye-level interior from the (possibly
  * edited) detailed prompt.
  *
- * With a `blockoutDataUrl` (an eye-level 3D massing of the room) this is
- * IMAGE-TO-IMAGE — the blockout fixes the camera viewpoint and the wall/window/
- * door/furniture positions, so the render can't rearrange the layout. Without
- * one it falls back to TEXT-TO-IMAGE (no image, to avoid the top-down crop
- * dragging the output to a top view).
+ * With a `blockoutDataUrl` (the colour-coded eye-level massing of the room)
+ * this renders via FLUX.1 Kontext — a structure-preserving EDIT model — so the
+ * walls/window/door/furniture positions are carried by the image, then a vision
+ * check compares the result against `layoutText` and retries once with
+ * corrections if it drifted. Without a blockout it falls back to TEXT-TO-IMAGE.
  */
 export async function requestRoomRender(
   prompt: string,
   variation: number,
   brief: DesignBrief,
   blockoutDataUrl?: string,
-): Promise<string> {
+  layoutText?: string,
+): Promise<RoomRenderResult> {
   const hasBlockout = Boolean(blockoutDataUrl);
   if (IS_STATIC) {
-    return generateImageBrowser(
-      roomRenderPrompt(prompt, variation, brief, hasBlockout),
-      hasBlockout ? [blockoutDataUrl!] : [],
-      requireKey(),
-      "room.png",
-    );
+    const key = requireKey();
+    if (!hasBlockout) {
+      const image = await generateImageBrowser(
+        roomRenderPrompt(prompt, variation, brief, false),
+        [],
+        key,
+        "room.png",
+      );
+      return { image };
+    }
+    let image: string;
+    try {
+      image = await generateKontextImageBrowser(
+        kontextRenderPrompt(prompt, brief),
+        blockoutDataUrl!,
+        key,
+      );
+    } catch {
+      // Kontext unavailable → previous behavior (nano-banana img2img).
+      image = await generateImageBrowser(
+        roomRenderPrompt(prompt, variation, brief, true),
+        [blockoutDataUrl!],
+        key,
+        "room.png",
+      );
+    }
+    if (!layoutText) return { image };
+    const check = await verifyRenderLayoutBrowser(image, layoutText, key);
+    if (!check) return { image };
+    if (check.matches) return { image, verified: true };
+    try {
+      const retryImage = await generateKontextImageBrowser(
+        kontextRenderPrompt(prompt, brief, check.problems),
+        blockoutDataUrl!,
+        key,
+      );
+      const check2 = await verifyRenderLayoutBrowser(retryImage, layoutText, key);
+      return { image: retryImage, verified: check2 ? check2.matches : undefined };
+    } catch {
+      return { image, verified: false };
+    }
   }
   const data = await postJson<GenerateImageResponse>("/api/room", {
     action: "render",
@@ -130,6 +174,7 @@ export async function requestRoomRender(
     variation,
     brief,
     blockout: blockoutDataUrl,
+    layout: layoutText,
   });
-  return data.image;
+  return { image: data.image, verified: data.verified };
 }

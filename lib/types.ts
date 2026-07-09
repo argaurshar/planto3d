@@ -57,6 +57,12 @@ export interface GenerateImageResponse {
    */
   image: string;
   mimeType: string;
+  /**
+   * Layout verification result for layout-locked room renders: true = the
+   * vision check confirmed the render matches the detected layout; false = it
+   * still mismatched after a corrective retry; undefined = check not run.
+   */
+  verified?: boolean;
 }
 
 /** Response shape returned by the room "write" action (Stage 3a). */
