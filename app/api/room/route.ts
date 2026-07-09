@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { generateImage, KieError } from "@/lib/kie";
-import { writeRoomPrompt } from "@/lib/kieChat";
+import { generateImage, generateKontextImage, KieError } from "@/lib/kie";
+import { writeRoomPrompt, verifyRenderLayout } from "@/lib/kieChat";
 import { dataUrlToInline } from "@/lib/image";
-import { roomRenderPrompt, fallbackRoomPrompt } from "@/lib/prompts";
+import { roomRenderPrompt, kontextRenderPrompt, fallbackRoomPrompt } from "@/lib/prompts";
 import { isAllowedReference } from "@/lib/refs";
 import { DEFAULT_BRIEF } from "@/lib/styles";
 import type {
@@ -13,7 +13,8 @@ import type {
   RoomType,
 } from "@/lib/types";
 
-export const maxDuration = 120;
+// Kontext render + verify + one corrective retry can chain two generations.
+export const maxDuration = 300;
 
 // Cap on the base64 data-URL *string* length (~10MB of characters ≈ ~7MB image).
 const MAX_DATA_URL_CHARS = 10 * 1024 * 1024;
@@ -31,10 +32,58 @@ interface Body {
   reference?: string;
   /** Eye-level 3D blockout (base64 data URL) used as image-to-image control. */
   blockout?: string;
+  /** Detected-layout description used to verify the render (plain text). */
+  layout?: string;
 }
 
 function err(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
+}
+
+/**
+ * Layout-locked render: FLUX.1 Kontext (structure-preserving edit) from the
+ * blockout, then a vision-verify pass with one corrective retry. Falls back to
+ * nano-banana image-to-image if Kontext is unavailable.
+ */
+async function renderLocked(
+  interior: string,
+  variation: number,
+  brief: DesignBrief,
+  blockout: string,
+  layout?: string,
+): Promise<{ image: string; verified?: boolean }> {
+  let image: string;
+  try {
+    ({ imageUrl: image } = await generateKontextImage(
+      kontextRenderPrompt(interior, brief),
+      blockout,
+    ));
+  } catch {
+    // Kontext unavailable → previous behavior (nano-banana img2img).
+    ({ imageUrl: image } = await generateImage(
+      roomRenderPrompt(interior, variation, brief, true),
+      [blockout],
+      "room.png",
+    ));
+  }
+
+  if (!layout) return { image };
+  const check = await verifyRenderLayout(image, layout);
+  if (!check) return { image };
+  if (check.matches) return { image, verified: true };
+
+  // One corrective retry with the verifier's findings; keep it even if the
+  // second check still fails (report verified: false so the UI can say so).
+  try {
+    const retry = await generateKontextImage(
+      kontextRenderPrompt(interior, brief, check.problems),
+      blockout,
+    );
+    const check2 = await verifyRenderLayout(retry.imageUrl, layout);
+    return { image: retry.imageUrl, verified: check2 ? check2.matches : undefined };
+  } catch {
+    return { image, verified: false };
+  }
 }
 
 export async function POST(req: Request) {
@@ -64,6 +113,11 @@ export async function POST(req: Request) {
       blockout = body.blockout;
     }
   }
+  // Optional expected-layout text for the post-render verification pass.
+  const layout =
+    typeof body.layout === "string" && body.layout.trim()
+      ? body.layout.trim().slice(0, 2000)
+      : undefined;
 
   // The crop is only needed by the prompt writer (write/auto). The render is
   // text-to-image and needs no image.
@@ -98,13 +152,18 @@ export async function POST(req: Request) {
       return NextResponse.json(payload);
     }
 
-    // Stage 3b: render. With a blockout it's image-to-image (layout-locked);
-    // without one it's text-to-image.
+    // Stage 3b: render. With a blockout it's a layout-locked Kontext edit with a
+    // verify/retry pass; without one it's text-to-image.
     if (action === "render") {
       const interior = (body.prompt ?? "").trim() || fallbackRoomPrompt(brief, roomType);
+      if (blockout) {
+        const { image, verified } = await renderLocked(interior, variation, brief, blockout, layout);
+        const payload: GenerateImageResponse = { image, mimeType: "image/png", verified };
+        return NextResponse.json(payload);
+      }
       const { imageUrl } = await generateImage(
-        roomRenderPrompt(interior, variation, brief, Boolean(blockout)),
-        blockout ? [blockout] : [],
+        roomRenderPrompt(interior, variation, brief, false),
+        [],
         "room.png",
       );
       const payload: GenerateImageResponse = { image: imageUrl, mimeType: "image/png" };
@@ -119,9 +178,19 @@ export async function POST(req: Request) {
     } catch {
       interior = fallbackRoomPrompt(brief, roomType);
     }
+    if (blockout) {
+      const { image, verified } = await renderLocked(interior, variation, brief, blockout, layout);
+      const payload: GenerateImageResponse & RoomPromptResponse = {
+        image,
+        mimeType: "image/png",
+        prompt: interior,
+        verified,
+      };
+      return NextResponse.json(payload);
+    }
     const { imageUrl } = await generateImage(
-      roomRenderPrompt(interior, variation, brief, Boolean(blockout)),
-      blockout ? [blockout] : [],
+      roomRenderPrompt(interior, variation, brief, false),
+      [],
       "room.png",
     );
     const payload: GenerateImageResponse & RoomPromptResponse = {

@@ -9,7 +9,12 @@
 // permissive CORS headers. If they don't, the UI still loads but generation
 // will fail with a network/CORS error — use the server build (Vercel) instead.
 
-import { promptWriterSystem, roomRenderPrompt } from "./prompts";
+import {
+  promptWriterSystem,
+  roomRenderPrompt,
+  layoutVerifierSystem,
+  parseVerifierReply,
+} from "./prompts";
 import {
   SPATIAL_EXTRACTION_PROMPT,
   SPATIAL_RETRY_PROMPT,
@@ -35,6 +40,12 @@ function chatModel(): string {
 function detectModel(): string {
   return process.env.NEXT_PUBLIC_KIE_DETECT_MODEL || "gemini-2.5-pro";
 }
+function kontextModel(): string {
+  return process.env.NEXT_PUBLIC_KIE_KONTEXT_MODEL || "flux-kontext-max";
+}
+
+const KONTEXT_GENERATE_URL = "https://api.kie.ai/api/v1/flux/kontext/generate";
+const KONTEXT_RECORD_URL = "https://api.kie.ai/api/v1/flux/kontext/record-info";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -136,6 +147,77 @@ export async function generateImageBrowser(
   );
   const taskId = await createTask(prompt, urls, apiKey);
   return pollTask(taskId, apiKey);
+}
+
+/** First plausible image URL anywhere in a kontext record-info payload. */
+function extractImageUrl(payload: unknown): string | null {
+  let text: string;
+  try {
+    text = JSON.stringify(payload);
+  } catch {
+    return null;
+  }
+  const urls = text.match(/https?:\/\/[^"\\\s]+/g) ?? [];
+  const image = urls.find((u) => /\.(png|jpe?g|webp)(\?|$)/i.test(u));
+  return image ?? urls[0] ?? null;
+}
+
+/**
+ * Render via FLUX.1 Kontext (structure-preserving edit): the input image (our
+ * eye-level blockout) fixes the composition; the prompt says what to make it.
+ */
+export async function generateKontextImageBrowser(
+  prompt: string,
+  input: string,
+  apiKey: string,
+  fileName = "blockout.png",
+): Promise<string> {
+  const inputImage = await toHostedUrl(input, apiKey, fileName);
+  const res = await fetch(KONTEXT_GENERATE_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt,
+      inputImage,
+      model: kontextModel(),
+      aspectRatio: "4:3",
+      outputFormat: "png",
+      enableTranslation: false,
+    }),
+  });
+  const json = (await res.json().catch(() => null)) as
+    | { code?: number; msg?: string; data?: { taskId?: string } }
+    | null;
+  if (!res.ok || !json || (json.code && json.code !== 200) || !json.data?.taskId) {
+    const code = json?.code ?? res.status;
+    throw new Error(friendly(code, json?.msg || `Kontext generate failed (HTTP ${res.status}).`));
+  }
+
+  const taskId = json.data.taskId;
+  const deadline = Date.now() + 110_000;
+  while (Date.now() < deadline) {
+    const poll = await fetch(`${KONTEXT_RECORD_URL}?taskId=${encodeURIComponent(taskId)}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    }).catch(() => null);
+    if (poll?.ok) {
+      const info = (await poll.json().catch(() => null)) as
+        | { data?: { successFlag?: number; errorMessage?: string | null; response?: unknown } }
+        | null;
+      const d = info?.data;
+      if (d) {
+        if (d.successFlag === 1) {
+          const url = extractImageUrl(d.response ?? d);
+          if (url) return url;
+          throw new Error("Kontext task succeeded but returned no image URL.");
+        }
+        if (d.successFlag === 2 || d.successFlag === 3) {
+          throw new Error(d.errorMessage || "Kontext generation failed at kie.ai.");
+        }
+      }
+    }
+    await sleep(2500);
+  }
+  throw new Error("Kontext generation timed out. Please try again.");
 }
 
 type ChatContent =
@@ -258,6 +340,30 @@ export async function writeRoomPromptBrowser(args: {
     .trim()
     .slice(0, 4000);
   return { prompt, boxes };
+}
+
+/**
+ * Verify a finished render against the expected layout (browser). Best-effort:
+ * returns null when the check can't run, so callers just skip verification.
+ */
+export async function verifyRenderLayoutBrowser(
+  imageUrl: string,
+  expectedLayout: string,
+  apiKey: string,
+): Promise<{ matches: boolean; problems: string[] } | null> {
+  try {
+    const content = await chatComplete(
+      layoutVerifierSystem(),
+      [
+        { type: "text", text: `EXPECTED LAYOUT:\n${expectedLayout}` },
+        { type: "image_url", image_url: { url: imageUrl } },
+      ],
+      apiKey,
+    );
+    return parseVerifierReply(content);
+  } catch {
+    return null;
+  }
 }
 
 // Re-exported so api.ts can build prompts identically to the server path.
