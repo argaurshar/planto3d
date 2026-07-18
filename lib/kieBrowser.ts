@@ -35,10 +35,10 @@ function imageResolution(): string {
   return process.env.NEXT_PUBLIC_KIE_IMAGE_RESOLUTION || "1K";
 }
 function chatModel(): string {
-  return process.env.NEXT_PUBLIC_KIE_CHAT_MODEL || "gemini-2.5-flash";
+  return process.env.NEXT_PUBLIC_KIE_CHAT_MODEL || "gemini-3-flash";
 }
 function detectModel(): string {
-  return process.env.NEXT_PUBLIC_KIE_DETECT_MODEL || "gemini-2.5-pro";
+  return process.env.NEXT_PUBLIC_KIE_DETECT_MODEL || "gemini-3-pro";
 }
 function kontextModel(): string {
   return process.env.NEXT_PUBLIC_KIE_KONTEXT_MODEL || "flux-kontext-max";
