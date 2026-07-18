@@ -98,17 +98,19 @@ falls back to **text-to-image** when no blockout is available.
   - **`nano-banana-2`** image model via the **job API** (`lib/kie.ts`) — the
     overview render + the room-render fallback when Kontext/blockout is
     unavailable.
-  - a **vision chat model** (`gemini-2.5-flash`) via the **OpenAI-compatible
+  - a **vision chat model** (`gemini-3-flash`) via the **OpenAI-compatible
     chat endpoint** for the prompt-writer and the post-render **layout
     verifier** (`lib/kieChat.ts`).
-  - a **detection model** (`gemini-2.5-pro`) for the spatial-extraction pass that
+  - a **detection model** (`gemini-3-pro`) for the spatial-extraction pass that
     builds the blockout — stronger spatial reasoning than flash, with a
     retry-on-too-few guard (`lib/spatial.ts` / `lib/kieChat.ts`).
+    (The earlier `gemini-2.5-flash`/`-pro` were retired by Google, which returns
+    a 404 through kie.ai's proxy — keep these on a current Gemini generation.)
 - The kie.ai API key (`KIE_API_KEY`) is read **only** in server code
   (`lib/kie.ts` / `lib/kieChat.ts`, which import `server-only`); it is never
   bundled into the client. Overrides: `KIE_IMAGE_MODEL`, `KIE_IMAGE_RESOLUTION`
-  (`1K`|`2K`|`4K`, default `1K`), `KIE_CHAT_MODEL` (default `gemini-2.5-flash`),
-  `KIE_DETECT_MODEL` (default `gemini-2.5-pro`), `KIE_KONTEXT_MODEL` (default
+  (`1K`|`2K`|`4K`, default `1K`), `KIE_CHAT_MODEL` (default `gemini-3-flash`),
+  `KIE_DETECT_MODEL` (default `gemini-3-pro`), `KIE_KONTEXT_MODEL` (default
   `flux-kontext-max`).
 
 ### kie.ai job flow (in `lib/kie.ts`)

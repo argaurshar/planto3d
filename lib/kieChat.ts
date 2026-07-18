@@ -20,9 +20,9 @@ import type { DesignBrief, RoomType } from "./types";
  * Endpoint shape: https://api.kie.ai/<model>/v1/chat/completions
  */
 
-const CHAT_MODEL = process.env.KIE_CHAT_MODEL || "gemini-2.5-flash";
+const CHAT_MODEL = process.env.KIE_CHAT_MODEL || "gemini-3-flash";
 // Detection benefits from a stronger spatial model than the prompt writer.
-const DETECT_MODEL = process.env.KIE_DETECT_MODEL || "gemini-2.5-pro";
+const DETECT_MODEL = process.env.KIE_DETECT_MODEL || "gemini-3-pro";
 
 function chatUrl(model: string): string {
   return `https://api.kie.ai/${model}/v1/chat/completions`;
