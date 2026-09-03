@@ -61,9 +61,10 @@ export function promptWriterSystem(
       : "First infer the room type from the layout.";
   const overviewHint = hasOverview
     ? [
-        "A second image shows a 3D axonometric overview of the WHOLE home; use it",
-        "to keep the room's architecture, materials and palette consistent with",
-        "the rest of the home (do not describe the other rooms).",
+        "A second image shows a generated 3D axonometric overview of the WHOLE",
+        "home; use it ONLY for style, materials and palette consistency with the",
+        "rest of the home (do not describe the other rooms). The plan crop is the",
+        "geometric truth — where the two disagree on layout, trust the plan crop.",
       ].join(" ")
     : "";
   const layoutHint = hasLayout
@@ -78,8 +79,12 @@ export function promptWriterSystem(
   return [
     "You are an expert architectural-visualization prompt writer specializing in",
     "high-end interior renders.",
-    "You are given a cropped region of a 3D overview showing a single room from",
-    "above. Analyze it and reconstruct it as a PHOTOREALISTIC eye-level interior.",
+    "You are given a cropped region of the 2D ARCHITECTURAL FLOOR PLAN showing a",
+    "single room from directly above (top-down, orthographic). Read the plan",
+    "symbols: furniture is drawn as outlines (bed with pillows, sofa, table with",
+    "chairs, wardrobe, toilet, sink), doors as an arc/swing in a wall gap, windows",
+    "as thin lines or a break in a wall. Analyze it and reconstruct it as a",
+    "PHOTOREALISTIC eye-level interior.",
     roomHint,
     overviewHint,
     layoutHint,

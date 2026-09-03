@@ -29,11 +29,16 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
 3. **Generate overview** — POST `{ plan, brief }` to `/api/overview`; Nano
    Banana 2 returns an **axonometric** top-view of the whole plan
    (`components/OverviewView.tsx`). **Approve** to continue.
-4. **Draw a box** around a room **on the generated 3D overview**
-   (`components/RoomSelector.tsx`); the selection is captured in **natural image
-   pixels** and cropped client-side (`lib/crop.ts`, which loads the remote
-   overview via a CORS image proxy — `lib/imageProxy.ts` — so the canvas isn't
-   tainted). Then a per-room
+4. **Draw a box** around a room **on the 2D plan** (`components/RoomSelector.tsx`;
+   the generated 3D overview is shown beside it as a *reference only*). The
+   plan is the geometric source of truth: it is exact and top-down, so crop
+   coordinates are floor coordinates — which is what detection and the blockout
+   assume. (Cropping from the axonometric overview was the old behaviour and
+   compounded error: the overview is itself an AI drawing that drifts from the
+   plan, and its image-y mixes height with depth, skewing the blockout.) The
+   selection is captured in **natural image pixels** and cropped client-side
+   (`lib/crop.ts`; remote images go through the CORS proxy `lib/imageProxy.ts`
+   so the canvas isn't tainted). Then a per-room
    **setup table** (`components/RoomSetup.tsx`) picks the **interior type +
    style** (overrides the brief's style for this room only).
 5. **Two-stage room render:**
@@ -197,7 +202,7 @@ lib/
 - **Model call + error handling:** `lib/kie.ts` (`generateImage`,
   `KieError` with an HTTP status; maps kie.ai codes 401/402/429 etc.). Routes
   map errors to clean JSON responses.
-- **Selection → crop:** `RoomSelector.tsx` reports a rect in natural pixels;
+- **Selection → crop (of the 2D plan):** `RoomSelector.tsx` reports a rect in natural pixels;
   `lib/crop.ts` does the full-resolution crop on a `<canvas>`.
 
 ## Development workflow
