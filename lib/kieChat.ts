@@ -101,6 +101,8 @@ async function detectOnce(imageUrl: string, key: string, system: string): Promis
 /**
  * Read the room's printed dimensions off the plan crop. Best-effort: any
  * failure returns null and the blockout falls back to its aspect heuristic.
+ * This is text reading, not spatial reasoning, so it runs on the cheaper
+ * CHAT_MODEL rather than DETECT_MODEL.
  */
 async function detectRoomSize(imageUrl: string, key: string): Promise<RoomSize | null> {
   try {
@@ -111,7 +113,6 @@ async function detectRoomSize(imageUrl: string, key: string): Promise<RoomSize |
         { type: "image_url", image_url: { url: imageUrl } },
       ],
       key,
-      DETECT_MODEL,
     );
     return parseRoomDimensions(content);
   } catch {
@@ -148,6 +149,8 @@ export async function writeRoomPrompt(args: {
   roomType: RoomType;
   /** Optional hosted overview URL for whole-home style consistency. */
   overviewUrl?: string;
+  /** Skip the paid dimension read when the caller won't use `roomSize`. */
+  needRoomSize?: boolean;
 }): Promise<{ prompt: string; boxes: SpatialBox[]; roomSize: RoomSize | null }> {
   const key = requireApiKey();
   const imageUrl = await uploadBase64(args.cropDataUrl, "room.png");
@@ -157,7 +160,7 @@ export async function writeRoomPrompt(args: {
   // Both are best-effort and independent, so run them concurrently.
   const [{ layout, boxes }, roomSize] = await Promise.all([
     detectLayout(imageUrl, key),
-    detectRoomSize(imageUrl, key),
+    args.needRoomSize === false ? Promise.resolve(null) : detectRoomSize(imageUrl, key),
   ]);
   const hasOverview = Boolean(args.overviewUrl);
   const system = promptWriterSystem(args.brief, args.roomType, hasOverview, Boolean(layout));

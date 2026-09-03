@@ -9,6 +9,9 @@ import type { DesignBrief, GenerateImageResponse } from "@/lib/types";
 // Image generation is async at kie.ai (create + poll); allow a generous timeout.
 // Overview generation has been observed at ~160s, so allow the full poll window.
 export const maxDuration = 300;
+// The generation budget sits under maxDuration with headroom for the upload
+// and the response, so our own friendly timeout fires before the platform's.
+const ROUTE_BUDGET_MS = maxDuration * 1000 - 20_000;
 
 // Cap on the base64 data-URL *string* length (~10MB of characters ≈ ~7MB image).
 const MAX_DATA_URL_CHARS = 10 * 1024 * 1024;
@@ -45,7 +48,9 @@ export async function POST(req: Request) {
   const brief: DesignBrief = { ...DEFAULT_BRIEF, ...(body.brief ?? {}) };
 
   try {
-    const { imageUrl } = await generateImage(overviewPrompt(brief), [plan], "plan.png");
+    const { imageUrl } = await generateImage(overviewPrompt(brief), [plan], "plan.png", {
+      timeoutMs: ROUTE_BUDGET_MS,
+    });
     const payload: GenerateImageResponse = {
       image: imageUrl,
       mimeType: "image/png",

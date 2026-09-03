@@ -74,25 +74,62 @@ export const ROOM_DIMENSION_PROMPT = [
 ].join(" ");
 
 /**
- * Parse the dimension reply. Returns null when absent or implausible, so the
- * caller falls back to the aspect-ratio heuristic.
+ * Pull the outermost JSON object out of an LLM reply: strips markdown fences,
+ * slices from the first "{" to the last "}", and parses safely. Shared by the
+ * dimension parser, the box parser's object branch and the verifier parser so
+ * hardening happens in one place. Returns null on anything malformed.
  */
-export function parseRoomDimensions(content: string): RoomSize | null {
+export function extractJsonObject(content: string): Record<string, unknown> | null {
   if (!content) return null;
-  const text = content.replace(/^```[a-z]*\s*/i, "").replace(/\s*```$/i, "");
+  const text = content.trim().replace(/^```[a-z]*\s*/i, "").replace(/\s*```$/i, "");
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start === -1 || end <= start) return null;
-  let parsed: { width_m?: unknown; depth_m?: unknown };
   try {
-    parsed = JSON.parse(text.slice(start, end + 1)) as typeof parsed;
+    const parsed: unknown = JSON.parse(text.slice(start, end + 1));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
   } catch {
     return null;
   }
-  const width = Number(parsed.width_m);
-  const depth = Number(parsed.depth_m);
+}
+
+/** Parse a dimension value that may be a number, "3.6", or a comma decimal "3,6". */
+function toMetres(raw: unknown): number {
+  if (typeof raw === "number") return raw;
+  if (typeof raw !== "string") return NaN;
+  return Number(raw.trim().replace(/\s*m$/i, "").replace(",", "."));
+}
+
+/**
+ * Parse the dimension reply. Tolerates comma decimals ("3,6" — the format the
+ * prompt's own example uses, both quoted and as bare JSON) and cm/mm values.
+ * Returns null when absent or implausible, so the caller falls back to the
+ * aspect-ratio heuristic.
+ */
+export function parseRoomDimensions(content: string): RoomSize | null {
+  if (!content) return null;
+  // Bare "3,6" inside JSON is invalid; a digit,digit pair is never valid JSON
+  // punctuation here (JSON separators are followed by a space or a quote), so
+  // rewrite it to a dot before parsing.
+  const parsed = extractJsonObject(content.replace(/(\d),(\d)/g, "$1.$2"));
+  if (!parsed) return null;
+  let width = toMetres(parsed.width_m);
+  let depth = toMetres(parsed.depth_m);
+  if (!Number.isFinite(width) || !Number.isFinite(depth)) return null;
+  // Values above any real room in metres are almost certainly cm or mm.
+  if (width > 25 || depth > 25) {
+    if (width <= 2500 && depth <= 2500) {
+      width /= 100;
+      depth /= 100;
+    } else if (width <= 25_000 && depth <= 25_000) {
+      width /= 1000;
+      depth /= 1000;
+    }
+  }
   // Rooms outside this range are almost certainly a misread, not a real room.
-  const sane = (v: number) => Number.isFinite(v) && v >= 1 && v <= 25;
+  const sane = (v: number) => v >= 1 && v <= 25;
   if (!sane(width) || !sane(depth)) return null;
   return { width, depth };
 }
@@ -149,16 +186,8 @@ export function parseSpatialBoxes(content: string): SpatialBox[] {
     }
   }
   if (!Array.isArray(parsed)) {
-    const oStart = text.indexOf("{");
-    const oEnd = text.lastIndexOf("}");
-    if (oStart !== -1 && oEnd > oStart) {
-      try {
-        const obj = JSON.parse(text.slice(oStart, oEnd + 1));
-        if (obj && typeof obj === "object") parsed = firstArrayProp(obj as Record<string, unknown>);
-      } catch {
-        return [];
-      }
-    }
+    const obj = extractJsonObject(text);
+    if (obj) parsed = firstArrayProp(obj);
   }
   if (!Array.isArray(parsed)) return [];
 
@@ -194,18 +223,38 @@ export function summarizeLabels(boxes: SpatialBox[]): string {
     .join(", ");
 }
 
-/** True if the label is a wall opening (window/door) rather than furniture. */
-export function isOpeningLabel(label: string): boolean {
-  return /\b(window|door|doorway|entry|opening|sliding door|french door|skylight)\b/.test(
+/**
+ * True if the label is a door of any kind. The single definition used for the
+ * camera position, the blockout panel colour, height priors and the layout
+ * text, so they agree by construction.
+ */
+export function isDoorLabel(label: string): boolean {
+  return /\b(door|doorway|entry|entrance|opening|archway)\b/.test(label.toLowerCase());
+}
+
+/** Doors that are NOT the natural place to stand: balconies, closets, etc. */
+function isSecondaryDoor(label: string): boolean {
+  return /\b(sliding|balcony|closet|wardrobe|french|patio|glass|cupboard)\b/.test(
     label.toLowerCase(),
   );
+}
+
+/** True if the label is a wall opening (window/door) rather than furniture. */
+export function isOpeningLabel(label: string): boolean {
+  return isDoorLabel(label) || /\b(window|skylight)\b/.test(label.toLowerCase());
+}
+
+/** Centre of a box in 0-1000 crop coordinates. */
+export function boxCenter(b: SpatialBox): { cx: number; cy: number } {
+  const [ymin, xmin, ymax, xmax] = b.box_2d;
+  return { cx: (xmin + xmax) / 2, cy: (ymin + ymax) / 2 };
 }
 
 /** Approximate height (metres) of a furniture/fixture label, for the 3D blockout. */
 export function furnitureHeight(label: string): number {
   const l = label.toLowerCase();
+  if (isDoorLabel(l)) return 2.0;
   if (/\b(wardrobe|closet|cupboard|cabinet|bookshelf|shelf|fridge|refrigerator)\b/.test(l)) return 2.0;
-  if (/\b(door|doorway)\b/.test(l)) return 2.0;
   if (/\b(curtain|window|skylight)\b/.test(l)) return 1.5;
   if (/\b(plant|lamp|floor lamp|mirror|tv|television)\b/.test(l)) return 1.4;
   if (/\b(desk|table|dining table|dresser|vanity|sink|basin|counter|kitchen)\b/.test(l)) return 0.78;
@@ -251,13 +300,6 @@ export function nearestWall(cx: number, cy: number): Wall {
   return dists[0][1];
 }
 
-const WALL_WORD: Record<Wall, string> = {
-  far: "far wall (back)",
-  near: "near wall (front)",
-  left: "left wall",
-  right: "right wall",
-};
-
 /** Map a 0-1000 center to a coarse zone word. */
 function band(v: number, low: string, mid: string, high: string): string {
   if (v < 333) return low;
@@ -266,15 +308,122 @@ function band(v: number, low: string, mid: string, high: string): string {
 }
 
 /**
+ * Where the eye-level camera stands, in crop (0-1000) coordinates. Pure and
+ * deterministic so the blockout renderer and the layout text (prompt writer +
+ * verifier) call the SAME function and always agree on the viewpoint.
+ *
+ * Prefers the detected door (the natural "standing in the doorway" shot),
+ * skipping balcony/closet-style doors when a plain door exists. Falls back to
+ * the wall with the fewest items. In every case the spot is clamped away from
+ * the corners and rejected if it would sit inside a furniture footprint.
+ */
+export interface CameraSpot {
+  wall: Wall;
+  /** Position along that wall, 0-1000 (x for far/near, y for left/right). */
+  along: number;
+  atDoor: boolean;
+}
+
+const CAMERA_INSET = 90; // ≈0.35m from the wall as a fraction of a typical room
+const CAMERA_MARGIN = 40; // keep this far from any furniture box
+
+function insideFurniture(boxes: SpatialBox[], x: number, y: number): boolean {
+  return boxes.some((b) => {
+    if (isOpeningLabel(b.label)) return false;
+    const [ymin, xmin, ymax, xmax] = b.box_2d;
+    return (
+      x >= xmin - CAMERA_MARGIN &&
+      x <= xmax + CAMERA_MARGIN &&
+      y >= ymin - CAMERA_MARGIN &&
+      y <= ymax + CAMERA_MARGIN
+    );
+  });
+}
+
+function spotPoint(wall: Wall, along: number): { x: number; y: number } {
+  switch (wall) {
+    case "far":
+      return { x: along, y: CAMERA_INSET };
+    case "near":
+      return { x: along, y: 1000 - CAMERA_INSET };
+    case "left":
+      return { x: CAMERA_INSET, y: along };
+    default:
+      return { x: 1000 - CAMERA_INSET, y: along };
+  }
+}
+
+export function cameraSpot(boxes: SpatialBox[]): CameraSpot {
+  const clamp = (v: number) => Math.min(940, Math.max(60, v));
+
+  // 1. A door, preferring a plain entrance over balcony/closet doors.
+  const doors = boxes.filter((b) => isDoorLabel(b.label));
+  const door = doors.find((b) => !isSecondaryDoor(b.label)) ?? doors[0];
+  if (door) {
+    const { cx, cy } = boxCenter(door);
+    const wall = nearestWall(cx, cy);
+    const along = clamp(wall === "far" || wall === "near" ? cx : cy);
+    const p = spotPoint(wall, along);
+    if (!insideFurniture(boxes, p.x, p.y)) return { wall, along, atDoor: true };
+  }
+
+  // 2. Emptiest wall first, then the others, skipping spots inside furniture.
+  const counts: Record<Wall, number> = { far: 0, near: 0, left: 0, right: 0 };
+  for (const b of boxes) {
+    const { cx, cy } = boxCenter(b);
+    counts[nearestWall(cx, cy)] += 1;
+  }
+  const order = (["far", "near", "left", "right"] as Wall[]).sort((a, b) => counts[a] - counts[b]);
+  for (const wall of order) {
+    const p = spotPoint(wall, 500);
+    if (!insideFurniture(boxes, p.x, p.y)) return { wall, along: 500, atDoor: false };
+  }
+  return { wall: order[0], along: 500, atDoor: false };
+}
+
+/** The wall directly across from the viewer for each viewpoint. */
+const OPPOSITE: Record<Wall, Wall> = { far: "near", near: "far", left: "right", right: "left" };
+/** The wall on the viewer's LEFT for each viewpoint (three.js right-handed, y up). */
+const VIEWER_LEFT: Record<Wall, Wall> = { near: "left", far: "right", left: "far", right: "near" };
+
+/**
+ * Convert a crop centre into viewer-relative coordinates for a camera standing
+ * at `from`: depth 0 = nearest the viewer, 1000 = the back wall; side 0 = the
+ * viewer's left, 1000 = the viewer's right.
+ */
+function viewerRelative(from: Wall, cx: number, cy: number): { depth: number; side: number } {
+  switch (from) {
+    case "near":
+      return { depth: 1000 - cy, side: cx };
+    case "far":
+      return { depth: cy, side: 1000 - cx };
+    case "left":
+      return { depth: cx, side: cy };
+    default:
+      return { depth: 1000 - cx, side: 1000 - cy };
+  }
+}
+
+function wallWordFrom(from: Wall, wall: Wall): string {
+  if (wall === from) return "wall behind the viewer (not visible)";
+  if (wall === OPPOSITE[from]) return "back wall (facing the viewer)";
+  return wall === VIEWER_LEFT[from] ? "left wall" : "right wall";
+}
+
+/**
  * Turn detected boxes into a compact natural-language layout the prompt writer
- * can anchor to. Furniture is described by zone ("back-left", "center", …);
- * windows/doors are described by which wall they sit on. Repeated labels are
- * collapsed into counts ("two beds"). Returns "" for an empty list.
+ * can anchor to and the verifier can check. Everything is described RELATIVE
+ * TO THE VIEWER standing where the blockout camera stands (`cameraSpot`), so
+ * "back", "left" and "right" mean the same thing in the text, the blockout and
+ * the render. Furniture is described by zone ("back-left", "center", …);
+ * windows/doors by which wall they sit on. Repeated labels are collapsed into
+ * counts ("two beds"). Returns "" for an empty list.
  */
 export function describeLayout(boxes: SpatialBox[]): string {
   if (!boxes.length) return "";
 
-  const isOpening = isOpeningLabel;
+  const spot = cameraSpot(boxes);
+  const from = spot.wall;
 
   const furniture: string[] = [];
   const openings: string[] = [];
@@ -288,16 +437,15 @@ export function describeLayout(boxes: SpatialBox[]): string {
 
   for (const [label, group] of byLabel) {
     const places = group.map((b) => {
-      const [ymin, xmin, ymax, xmax] = b.box_2d;
-      const cy = (ymin + ymax) / 2;
-      const cx = (xmin + xmax) / 2;
-      if (isOpening(label)) return WALL_WORD[nearestWall(cx, cy)];
-      const vert = band(cy, "back", "middle", "front");
-      const horiz = band(cx, "left", "center", "right");
+      const { cx, cy } = boxCenter(b);
+      if (isOpeningLabel(label)) return wallWordFrom(from, nearestWall(cx, cy));
+      const { depth, side } = viewerRelative(from, cx, cy);
+      const vert = band(depth, "front", "middle", "back");
+      const horiz = band(side, "left", "center", "right");
       return vert === "middle" && horiz === "center" ? "center" : `${vert}-${horiz}`;
     });
 
-    if (isOpening(label)) {
+    if (isOpeningLabel(label)) {
       const noun = group.length > 1 ? `${label}s` : label;
       openings.push(`${countWord(group.length)} ${noun} on the ${[...new Set(places)].join(" and ")}`);
     } else if (group.length > 1) {
@@ -307,8 +455,10 @@ export function describeLayout(boxes: SpatialBox[]): string {
     }
   }
 
-  const parts: string[] = [];
-  if (furniture.length) parts.push(`Furniture (positions relative to the room): ${furniture.join(", ")}.`);
+  const parts: string[] = [
+    `Viewpoint: eye-level, standing ${spot.atDoor ? "in the doorway" : "at the middle"} of one wall looking across the room. "Back" is the wall facing the viewer, "front" is nearest the viewer, "left"/"right" are the viewer's left and right; the wall behind the viewer is not visible.`,
+  ];
+  if (furniture.length) parts.push(`Furniture (positions relative to the viewer): ${furniture.join(", ")}.`);
   if (openings.length) parts.push(`Openings: ${openings.join(", ")}.`);
   return parts.join(" ");
 }

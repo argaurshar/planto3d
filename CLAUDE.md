@@ -142,11 +142,21 @@ drops straight into `<img src>`.
 
 `/api/room` takes an `action`:
 - `"write"` → `lib/kieChat.ts` `writeRoomPrompt` (vision LLM) returns
-  `{ prompt, boxes }`. It runs a Gemini **spatial-extraction** pass first
-  (`lib/spatial.ts`: bounding boxes → detected-layout string) to ground the
-  prompt, then writes the interior prompt (falls back to a templated prompt if
-  the LLM call fails, so the user can always render). The `boxes` are returned so
-  the client can build the eye-level blockout (`lib/blockout.ts`).
+  `{ prompt, boxes, roomSize }`. It runs a Gemini **spatial-extraction** pass
+  (`lib/spatial.ts`: bounding boxes → detected-layout string) and, concurrently,
+  a cheap **dimension read** (`ROOM_DIMENSION_PROMPT` → `parseRoomDimensions`,
+  on the chat model) to ground the prompt, then writes the interior prompt
+  (falls back to a templated prompt if the LLM call fails, so the user can
+  always render). The `boxes` and `roomSize` are returned so the client can
+  build the eye-level blockout at true scale (`lib/blockout.ts`). The layout
+  string is written **relative to the viewer** standing where the blockout
+  camera stands (`cameraSpot` — one pure function shared by the blockout, the
+  prompt writer and the verifier, so all three agree on which wall is "back").
+  The `auto` action passes `needRoomSize: false` since it never returns it.
+- Every generation in a route draws from one budget derived from `maxDuration`
+  (`ROUTE_BUDGET_MS`); `renderLocked` skips the fallback/corrective retry when
+  under `MIN_RENDER_MS` remains so an already-billed image is returned instead
+  of lost to a platform kill.
 - `"render"` → with a `blockout` (colour-coded eye-level massing PNG) it runs
   `renderLocked`: **FLUX.1 Kontext** edit from the blockout
   (`generateKontextImage`, `kontextRenderPrompt`), then `verifyRenderLayout`
@@ -187,7 +197,10 @@ app/
 lib/
   kie.ts                # server-only kie.ai image client (upload + createTask + poll)
   kieChat.ts            # server-only kie.ai vision-LLM prompt writer (Stage 3a)
-  spatial.ts            # Stage 3a spatial grounding: detect boxes → layout string
+  spatial.ts            # Stage 3a grounding: detect boxes → viewer-relative layout string;
+                        #   printed-dimension reader; cameraSpot (shared viewpoint)
+  kiePoll.ts            # shared poll policy for both clients: 5-min window, transient
+                        #   "generate task timeout" grace (120s), timeout messages
   blockout.ts           # eye-level 3D blockout (Three.js) from boxes → render lock
   prompts.ts            # overview + prompt-writer system + room render templates
   styles.ts             # interior-design style presets + brief resolution

@@ -1,6 +1,6 @@
 // Shared types used across client and server.
 
-import type { SpatialBox } from "./spatial";
+import type { SpatialBox, RoomSize } from "./spatial";
 
 /** A base64-encoded image plus its mime type (no data: URL prefix). */
 export interface InlineImage {
@@ -80,7 +80,7 @@ export interface RoomPromptResponse {
    * client build the blockout at true scale instead of a fixed assumed size.
    * Omitted when the plan prints no dimensions or they couldn't be read.
    */
-  roomSize?: { width: number; depth: number } | null;
+  roomSize?: RoomSize | null;
 }
 
 export interface ApiError {
