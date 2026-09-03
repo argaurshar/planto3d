@@ -16,6 +16,23 @@ const RESOLUTION = process.env.KIE_IMAGE_RESOLUTION || "1K";
 // Structure-preserving edit model used for the blockout → photoreal render.
 const KONTEXT_MODEL = process.env.KIE_KONTEXT_MODEL || "flux-kontext-max";
 
+// Image jobs regularly take 2-3 minutes (nano-banana-2 has been observed at
+// 160s), so the poll window must be generously longer than the model's worst
+// case: giving up early abandons an image kie.ai has already generated and
+// billed for.
+const POLL_TIMEOUT_MS = 300_000;
+const POLL_INTERVAL_MS = 3000;
+
+/**
+ * kie.ai reports a failure message like "generate task timeout" on slow jobs
+ * even though the task often keeps running and then succeeds (the result shows
+ * up in the kie.ai dashboard). Treat those as transient and keep polling to our
+ * own deadline; any other failure message is terminal.
+ */
+function isTransientFailure(msg?: string | null): boolean {
+  return /timeou?t|timed out|queue|retry|pending/i.test(msg || "");
+}
+
 const UPLOAD_URL = "https://kieai.redpandaai.co/api/file-base64-upload";
 const CREATE_TASK_URL = "https://api.kie.ai/api/v1/jobs/createTask";
 const RECORD_INFO_URL = "https://api.kie.ai/api/v1/jobs/recordInfo";
@@ -183,7 +200,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Poll recordInfo until the task succeeds; returns the first result URL. */
 export async function pollTask(
   taskId: string,
-  { timeoutMs = 110_000, intervalMs = 2500 }: PollOptions = {},
+  { timeoutMs = POLL_TIMEOUT_MS, intervalMs = POLL_INTERVAL_MS }: PollOptions = {},
 ): Promise<string> {
   const key = getApiKey();
   const deadline = Date.now() + timeoutMs;
@@ -221,7 +238,7 @@ export async function pollTask(
         if (!url) throw new KieError("Task succeeded but returned no image URL.");
         return url;
       }
-      if (state === "fail") {
+      if (state === "fail" && !isTransientFailure(failMsg)) {
         throw new KieError(failMsg || "Generation failed at kie.ai.");
       }
       // state === "waiting" (or unknown) → keep polling.
@@ -230,7 +247,10 @@ export async function pollTask(
     await sleep(intervalMs);
   }
 
-  throw new KieError("Generation timed out. Please try again.", 504);
+  throw new KieError(
+    "Generation is still running after 5 minutes. kie.ai may yet finish it — check your kie.ai dashboard for the result, or try again.",
+    504,
+  );
 }
 
 function safeParse(json?: string): { resultUrls?: string[] } | null {
@@ -334,7 +354,7 @@ export async function generateKontextImage(
   }
 
   const taskId = json.data.taskId;
-  const deadline = Date.now() + 110_000;
+  const deadline = Date.now() + POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
     let poll: Response;
     try {
@@ -342,7 +362,7 @@ export async function generateKontextImage(
         headers: { Authorization: `Bearer ${key}` },
       });
     } catch {
-      await sleep(2500);
+      await sleep(POLL_INTERVAL_MS);
       continue;
     }
     const info = (await poll.json().catch(() => null)) as
@@ -356,11 +376,17 @@ export async function generateKontextImage(
         if (!url) throw new KieError("Kontext task succeeded but returned no image URL.");
         return { imageUrl: url };
       }
-      if (d.successFlag === 2 || d.successFlag === 3) {
+      if (
+        (d.successFlag === 2 || d.successFlag === 3) &&
+        !isTransientFailure(d.errorMessage)
+      ) {
         throw new KieError(d.errorMessage || "Kontext generation failed at kie.ai.");
       }
     }
-    await sleep(2500);
+    await sleep(POLL_INTERVAL_MS);
   }
-  throw new KieError("Kontext generation timed out. Please try again.", 504);
+  throw new KieError(
+    "The room render is still running after 5 minutes. Please try again.",
+    504,
+  );
 }
