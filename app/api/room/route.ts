@@ -140,15 +140,17 @@ export async function POST(req: Request) {
     if (action === "write") {
       let prompt: string;
       let boxes: RoomPromptResponse["boxes"] = [];
+      let roomSize: RoomPromptResponse["roomSize"] = null;
       try {
         const r = await writeRoomPrompt({ cropDataUrl: room!, brief, roomType, overviewUrl: reference });
         prompt = r.prompt;
         boxes = r.boxes;
+        roomSize = r.roomSize;
       } catch {
         // Degrade gracefully so the user can still render.
         prompt = fallbackRoomPrompt(brief, roomType);
       }
-      const payload: RoomPromptResponse = { prompt, boxes };
+      const payload: RoomPromptResponse = { prompt, boxes, roomSize };
       return NextResponse.json(payload);
     }
 

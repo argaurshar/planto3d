@@ -15,7 +15,9 @@ import {
   isOpeningLabel,
   nearestWall,
   type FurnitureCategory,
+  type RoomSize,
   type SpatialBox,
+  type Wall,
 } from "./spatial";
 
 const WALL_H = 2.7; // ceiling height (m)
@@ -43,6 +45,77 @@ const CATEGORY_COLOR: Record<FurnitureCategory, number> = {
 export interface BlockoutOptions {
   width?: number; // output px
   height?: number; // output px
+  /** True room size in metres (from the plan's printed dimensions), if known. */
+  roomSize?: RoomSize | null;
+}
+
+const DOOR_RE = /\b(door|doorway|entry)\b/;
+
+/**
+ * Floor footprint in metres. Prefers the plan's printed dimensions so furniture
+ * reads at true proportion; falls back to the crop aspect at an assumed size.
+ * If the printed dimensions are rotated relative to how the room is drawn (the
+ * model swapped the axes), they are swapped back to match the crop.
+ */
+function footprint(aspect: number, roomSize?: RoomSize | null): { roomW: number; roomD: number } {
+  if (roomSize) {
+    const { width, depth } = roomSize;
+    // Pick the orientation that better matches the crop's own aspect ratio.
+    const swapped = Math.abs(aspect - depth / width) < Math.abs(aspect - width / depth);
+    return swapped ? { roomW: depth, roomD: width } : { roomW: width, roomD: depth };
+  }
+  return {
+    roomW: aspect >= 1 ? ROOM_MAX : ROOM_MAX * aspect,
+    roomD: aspect >= 1 ? ROOM_MAX / aspect : ROOM_MAX,
+  };
+}
+
+/**
+ * Where the viewer stands. Preferring the detected door gives the natural
+ * "standing in the doorway" interior shot AND guarantees the camera is not
+ * inside the room's furniture. Without a door, stand at the middle of the
+ * emptiest wall so the most content is in frame.
+ */
+function cameraPlacement(
+  boxes: SpatialBox[],
+  roomW: number,
+  roomD: number,
+): { pos: [number, number, number]; target: [number, number, number] } {
+  const toX = (v: number) => (v / 1000) * roomW;
+  const toZ = (v: number) => (v / 1000) * roomD;
+  const INSET = 0.35; // stand just inside the wall, not embedded in it
+
+  const place = (wall: Wall, cx: number, cz: number) => {
+    switch (wall) {
+      case "far":
+        return { pos: [cx, EYE_H, INSET] as [number, number, number], target: [roomW / 2, 1.0, roomD] as [number, number, number] };
+      case "near":
+        return { pos: [cx, EYE_H, roomD - INSET] as [number, number, number], target: [roomW / 2, 1.0, 0] as [number, number, number] };
+      case "left":
+        return { pos: [INSET, EYE_H, cz] as [number, number, number], target: [roomW, 1.0, roomD / 2] as [number, number, number] };
+      default:
+        return { pos: [roomW - INSET, EYE_H, cz] as [number, number, number], target: [0, 1.0, roomD / 2] as [number, number, number] };
+    }
+  };
+
+  const door = boxes.find((b) => DOOR_RE.test(b.label.toLowerCase()));
+  if (door) {
+    const [ymin, xmin, ymax, xmax] = door.box_2d;
+    const mx = (xmin + xmax) / 2;
+    const my = (ymin + ymax) / 2;
+    return place(nearestWall(mx, my), toX(mx), toZ(my));
+  }
+
+  // No door detected: stand at the wall with the fewest items against it.
+  const counts: Record<Wall, number> = { far: 0, near: 0, left: 0, right: 0 };
+  for (const b of boxes) {
+    const [ymin, xmin, ymax, xmax] = b.box_2d;
+    counts[nearestWall((xmin + xmax) / 2, (ymin + ymax) / 2)] += 1;
+  }
+  const emptiest = (Object.keys(counts) as Wall[]).reduce((a, b) =>
+    counts[b] < counts[a] ? b : a,
+  );
+  return place(emptiest, roomW / 2, roomD / 2);
 }
 
 /**
@@ -64,10 +137,8 @@ export async function buildBlockoutDataUrl(
   const width = opts.width ?? 768;
   const height = opts.height ?? 576;
 
-  // Floor footprint in metres, proportional to the crop (width:depth = aspect:1).
   const aspect = Number.isFinite(cropAspect) && cropAspect > 0 ? cropAspect : 1;
-  const roomW = aspect >= 1 ? ROOM_MAX : ROOM_MAX * aspect;
-  const roomD = aspect >= 1 ? ROOM_MAX / aspect : ROOM_MAX;
+  const { roomW, roomD } = footprint(aspect, opts.roomSize);
 
   let THREE: typeof import("three");
   try {
@@ -110,7 +181,9 @@ export async function buildBlockoutDataUrl(
     floor.position.set(roomW / 2, 0, roomD / 2);
     scene.add(floor);
 
-    // Walls (far, left, right) — the near wall is behind the corner camera.
+    // All four walls. The one the camera stands at falls behind the near plane
+    // and is culled automatically, so nothing occludes the view — and furniture
+    // placed against any wall reads as touching it instead of floating.
     const wallMat = flat(COLORS.wall);
     const addWall = (w: number, x: number, z: number, rotY: number) => {
       const m = new THREE.Mesh(new THREE.PlaneGeometry(w, WALL_H), wallMat);
@@ -119,6 +192,7 @@ export async function buildBlockoutDataUrl(
       scene.add(m);
     };
     addWall(roomW, roomW / 2, 0, 0); // far
+    addWall(roomW, roomW / 2, roomD, 0); // near
     addWall(roomD, 0, roomD / 2, Math.PI / 2); // left
     addWall(roomD, roomW, roomD / 2, Math.PI / 2); // right
 
@@ -161,11 +235,13 @@ export async function buildBlockoutDataUrl(
       scene.add(mesh);
     }
 
-    // Eye-level corner camera that frames the whole room: stand in the near-right
-    // corner, look diagonally across to the far-left, wide FOV to fit everything.
+    // Eye-level camera standing at the doorway looking into the room, so every
+    // wall the room is "read" against — including the one the bed sits on and
+    // the one carrying the window — is in frame.
+    const { pos, target } = cameraPlacement(boxes, roomW, roomD);
     const camera = new THREE.PerspectiveCamera(72, width / height, 0.05, 100);
-    camera.position.set(roomW - 0.1, EYE_H, roomD - 0.1);
-    camera.lookAt(roomW * 0.4, 0.9, roomD * 0.4);
+    camera.position.set(pos[0], pos[1], pos[2]);
+    camera.lookAt(target[0], target[1], target[2]);
 
     renderer.render(scene, camera);
     const url = canvas.toDataURL("image/png");

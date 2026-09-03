@@ -5,10 +5,12 @@ import { promptWriterSystem, layoutVerifierSystem, parseVerifierReply } from "./
 import {
   SPATIAL_EXTRACTION_PROMPT,
   SPATIAL_RETRY_PROMPT,
+  ROOM_DIMENSION_PROMPT,
   parseSpatialBoxes,
+  parseRoomDimensions,
   describeLayout,
 } from "./spatial";
-import type { SpatialBox } from "./spatial";
+import type { SpatialBox, RoomSize } from "./spatial";
 import type { DesignBrief, RoomType } from "./types";
 
 /**
@@ -96,6 +98,27 @@ async function detectOnce(imageUrl: string, key: string, system: string): Promis
   return parseSpatialBoxes(content);
 }
 
+/**
+ * Read the room's printed dimensions off the plan crop. Best-effort: any
+ * failure returns null and the blockout falls back to its aspect heuristic.
+ */
+async function detectRoomSize(imageUrl: string, key: string): Promise<RoomSize | null> {
+  try {
+    const content = await chatComplete(
+      ROOM_DIMENSION_PROMPT,
+      [
+        { type: "text", text: "Read this room's printed dimensions." },
+        { type: "image_url", image_url: { url: imageUrl } },
+      ],
+      key,
+      DETECT_MODEL,
+    );
+    return parseRoomDimensions(content);
+  } catch {
+    return null;
+  }
+}
+
 async function detectLayout(
   imageUrl: string,
   key: string,
@@ -125,12 +148,17 @@ export async function writeRoomPrompt(args: {
   roomType: RoomType;
   /** Optional hosted overview URL for whole-home style consistency. */
   overviewUrl?: string;
-}): Promise<{ prompt: string; boxes: SpatialBox[] }> {
+}): Promise<{ prompt: string; boxes: SpatialBox[]; roomSize: RoomSize | null }> {
   const key = requireApiKey();
   const imageUrl = await uploadBase64(args.cropDataUrl, "room.png");
 
-  // Stage 3a.0: ground the prompt in a detected layout of the crop.
-  const { layout, boxes } = await detectLayout(imageUrl, key);
+  // Stage 3a.0: ground the prompt in a detected layout of the crop, and read the
+  // plan's printed dimensions so the blockout is built at the real room scale.
+  // Both are best-effort and independent, so run them concurrently.
+  const [{ layout, boxes }, roomSize] = await Promise.all([
+    detectLayout(imageUrl, key),
+    detectRoomSize(imageUrl, key),
+  ]);
   const hasOverview = Boolean(args.overviewUrl);
   const system = promptWriterSystem(args.brief, args.roomType, hasOverview, Boolean(layout));
 
@@ -149,7 +177,7 @@ export async function writeRoomPrompt(args: {
   if (!content) {
     throw new KieError("Prompt generator returned no text.");
   }
-  return { prompt: sanitizePrompt(content), boxes };
+  return { prompt: sanitizePrompt(content), boxes, roomSize };
 }
 
 /**

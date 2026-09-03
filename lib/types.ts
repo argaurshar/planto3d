@@ -75,6 +75,12 @@ export interface RoomPromptResponse {
    * omitted when detection failed.
    */
   boxes?: SpatialBox[];
+  /**
+   * Real room size in metres, read from the plan's printed dimensions. Lets the
+   * client build the blockout at true scale instead of a fixed assumed size.
+   * Omitted when the plan prints no dimensions or they couldn't be read.
+   */
+  roomSize?: { width: number; depth: number } | null;
 }
 
 export interface ApiError {
