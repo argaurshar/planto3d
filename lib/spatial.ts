@@ -46,6 +46,57 @@ export const SPATIAL_EXTRACTION_PROMPT = [
   "If the room is genuinely empty, return [].",
 ].join(" ");
 
+/** Real-world room size in metres, read from the plan's printed dimensions. */
+export interface RoomSize {
+  /** Horizontal (left-right) extent of the crop, in metres. */
+  width: number;
+  /** Vertical (top-bottom) extent of the crop, in metres. */
+  depth: number;
+}
+
+/**
+ * Asks the vision model to read the dimensions printed on the plan crop (e.g.
+ * "3,6 m x 2,7 m"). Used to scale the 3D blockout to the real room instead of
+ * assuming a fixed size, so furniture reads at the right proportion.
+ */
+export const ROOM_DIMENSION_PROMPT = [
+  "You read dimensions off architectural floor plans. The image is a top-down",
+  "crop of a 2D floor plan showing ONE room. Find the room's printed dimension",
+  'text, e.g. "3,6 m x 2,7 m" or "3.6 x 2.7" (ignore any imperial text in',
+  'parentheses such as (11\' 9" x 8\' 10")).',
+  "Map them onto the image: width_m is the HORIZONTAL (left-to-right) extent of",
+  "the room as drawn, depth_m is the VERTICAL (top-to-bottom) extent as drawn.",
+  "Compare against how the room is drawn — if the room is drawn wider than it is",
+  "tall, then width_m must be the larger number.",
+  'Respond with ONLY JSON: {"width_m": number, "depth_m": number}.',
+  "If no dimensions are printed, respond with exactly {}.",
+  "No prose, no markdown fences.",
+].join(" ");
+
+/**
+ * Parse the dimension reply. Returns null when absent or implausible, so the
+ * caller falls back to the aspect-ratio heuristic.
+ */
+export function parseRoomDimensions(content: string): RoomSize | null {
+  if (!content) return null;
+  const text = content.replace(/^```[a-z]*\s*/i, "").replace(/\s*```$/i, "");
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end <= start) return null;
+  let parsed: { width_m?: unknown; depth_m?: unknown };
+  try {
+    parsed = JSON.parse(text.slice(start, end + 1)) as typeof parsed;
+  } catch {
+    return null;
+  }
+  const width = Number(parsed.width_m);
+  const depth = Number(parsed.depth_m);
+  // Rooms outside this range are almost certainly a misread, not a real room.
+  const sane = (v: number) => Number.isFinite(v) && v >= 1 && v <= 25;
+  if (!sane(width) || !sane(depth)) return null;
+  return { width, depth };
+}
+
 /** Forceful second-pass instruction used when the first detection found < 2 items. */
 export const SPATIAL_RETRY_PROMPT = [
   SPATIAL_EXTRACTION_PROMPT,

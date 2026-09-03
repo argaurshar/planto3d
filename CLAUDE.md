@@ -59,9 +59,15 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
      don't expose).
    - **3a.5 — layout lock (blockout)** — from the detected boxes, the client
      builds a coarse **eye-level 3D blockout** of the room with Three.js
-     (`lib/blockout.ts`): walls/floor extruded, a grey massing box per furniture
-     item (height by label prior), and coloured panels marking windows/doors on
-     the nearest wall, viewed from a doorway eye-level camera. Three.js is
+     (`lib/blockout.ts`): **all four walls** + floor, a colour-coded massing box
+     per furniture item (colour by category, height by label prior), and panels
+     marking windows/doors on the nearest wall. The camera **stands at the
+     detected door looking into the room** (falling back to the emptiest wall),
+     so items against any wall — including the near wall — are in frame; the wall
+     behind the camera is culled automatically. The footprint is scaled from the
+     plan's **printed dimensions** when they can be read (`ROOM_DIMENSION_PROMPT`
+     / `parseRoomDimensions`, axes auto-corrected against the crop aspect), else
+     from the crop aspect at an assumed size. Three.js is
      dynamically imported (browser-only; code-split out of SSR). A small preview
      ("Layout lock") is shown in `components/RoomPrompt.tsx`.
    - **3b — render** — when a blockout is present, `action:"render"` renders via

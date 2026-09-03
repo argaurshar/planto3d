@@ -243,7 +243,7 @@ export default function PlanToThreeD() {
   // eye-level 3D blockout from the detected boxes so the render can lock layout.
   async function writePrompt(crop: string, id: number) {
     try {
-      const { prompt, boxes } = await requestRoomPrompt(
+      const { prompt, boxes, roomSize } = await requestRoomPrompt(
         crop,
         effectiveBrief(),
         state.roomType,
@@ -253,7 +253,7 @@ export default function PlanToThreeD() {
       // Best-effort: a null blockout (no boxes / no WebGL) falls back to text-to-image.
       let blockout: string | null = null;
       try {
-        blockout = await buildBlockoutDataUrl(boxes, state.cropAspect);
+        blockout = await buildBlockoutDataUrl(boxes, state.cropAspect, { roomSize });
       } catch {
         blockout = null;
       }

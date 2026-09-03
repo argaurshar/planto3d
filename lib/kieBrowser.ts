@@ -18,10 +18,12 @@ import {
 import {
   SPATIAL_EXTRACTION_PROMPT,
   SPATIAL_RETRY_PROMPT,
+  ROOM_DIMENSION_PROMPT,
   parseSpatialBoxes,
+  parseRoomDimensions,
   describeLayout,
 } from "./spatial";
-import type { SpatialBox } from "./spatial";
+import type { SpatialBox, RoomSize } from "./spatial";
 import type { DesignBrief, RoomType } from "./types";
 
 const UPLOAD_URL = "https://kieai.redpandaai.co/api/file-base64-upload";
@@ -299,6 +301,27 @@ async function detectOnceBrowser(
 }
 
 /** Best-effort spatial detection on the room crop → { layout, boxes } ([] on failure). */
+/** Read the plan crop's printed room dimensions. Best-effort; null on failure. */
+async function detectRoomSizeBrowser(
+  imageUrl: string,
+  apiKey: string,
+): Promise<RoomSize | null> {
+  try {
+    const content = await chatComplete(
+      ROOM_DIMENSION_PROMPT,
+      [
+        { type: "text", text: "Read this room's printed dimensions." },
+        { type: "image_url", image_url: { url: imageUrl } },
+      ],
+      apiKey,
+      detectModel(),
+    );
+    return parseRoomDimensions(content);
+  } catch {
+    return null;
+  }
+}
+
 async function detectLayoutBrowser(
   imageUrl: string,
   apiKey: string,
@@ -327,9 +350,13 @@ export async function writeRoomPromptBrowser(args: {
   apiKey: string;
   /** Optional hosted overview URL for whole-home style consistency. */
   overviewUrl?: string;
-}): Promise<{ prompt: string; boxes: SpatialBox[] }> {
+}): Promise<{ prompt: string; boxes: SpatialBox[]; roomSize: RoomSize | null }> {
   const imageUrl = await uploadBase64(args.cropDataUrl, args.apiKey, "room.png");
-  const { layout, boxes } = await detectLayoutBrowser(imageUrl, args.apiKey);
+  // Detection and the dimension read are independent — run them concurrently.
+  const [{ layout, boxes }, roomSize] = await Promise.all([
+    detectLayoutBrowser(imageUrl, args.apiKey),
+    detectRoomSizeBrowser(imageUrl, args.apiKey),
+  ]);
   const hasOverview = Boolean(args.overviewUrl);
 
   const userContent: ChatContent[] = [
@@ -357,7 +384,7 @@ export async function writeRoomPromptBrowser(args: {
     .replace(/["'""]+$/, "")
     .trim()
     .slice(0, 4000);
-  return { prompt, boxes };
+  return { prompt, boxes, roomSize };
 }
 
 /**

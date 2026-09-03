@@ -1,5 +1,5 @@
 import type { DesignBrief, GenerateImageResponse, RoomPromptResponse, RoomType } from "./types";
-import type { SpatialBox } from "./spatial";
+import type { SpatialBox, RoomSize } from "./spatial";
 import { overviewPrompt, kontextRenderPrompt } from "./prompts";
 import {
   generateImageBrowser,
@@ -81,7 +81,7 @@ export async function requestRoomPrompt(
   brief: DesignBrief,
   roomType: RoomType,
   overviewUrl?: string,
-): Promise<{ prompt: string; boxes: SpatialBox[] }> {
+): Promise<{ prompt: string; boxes: SpatialBox[]; roomSize: RoomSize | null }> {
   if (IS_STATIC) {
     return writeRoomPromptBrowser({
       cropDataUrl: roomDataUrl,
@@ -98,7 +98,7 @@ export async function requestRoomPrompt(
     roomType,
     reference: overviewUrl,
   });
-  return { prompt: data.prompt, boxes: data.boxes ?? [] };
+  return { prompt: data.prompt, boxes: data.boxes ?? [], roomSize: data.roomSize ?? null };
 }
 
 export interface RoomRenderResult {
