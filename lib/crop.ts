@@ -75,7 +75,7 @@ function loadImage(
     el.onload = () => resolve({ img: el, revoke: () => {} });
     el.onerror = () =>
       reject(
-        new Error("Couldn't load the overview image to crop. Try regenerating the overview."),
+        new Error("Couldn't load the image to crop. Please try again."),
       );
     el.src = isRemote ? proxiedImageUrl(src) : src;
   });

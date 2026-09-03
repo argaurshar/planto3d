@@ -281,13 +281,16 @@ export default function PlanToThreeD() {
     }
   }
 
-  // Crop the selection from the 3D overview and move to the per-room setup table.
+  // Crop the selection from the 2D PLAN (the geometric source of truth — the
+  // generated overview is only a style reference) and move to the setup table.
+  // A top-down plan crop is what detection + the blockout assume: image
+  // coordinates ARE floor coordinates there, unlike on the axonometric overview.
   async function selectRoom(rect: Rect) {
-    if (!state.overviewDataUrl) return;
+    if (!state.planDataUrl) return;
     const id = nextReq();
     let crop: string;
     try {
-      crop = await cropToDataUrl(state.overviewDataUrl, rect);
+      crop = await cropToDataUrl(state.planDataUrl, rect);
     } catch (err) {
       if (isStale(id)) return;
       dispatch({ type: "ERROR", message: message(err) });
@@ -392,9 +395,10 @@ export default function PlanToThreeD() {
         />
       )}
 
-      {state.step === "select" && state.overviewDataUrl && (
+      {state.step === "select" && state.planDataUrl && (
         <RoomSelector
-          imageSrc={state.overviewDataUrl}
+          imageSrc={state.planDataUrl}
+          referenceSrc={state.overviewDataUrl}
           loading={state.stage !== "idle"}
           onSelect={selectRoom}
           onBack={goOverview}

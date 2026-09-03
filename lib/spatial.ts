@@ -22,8 +22,12 @@ export interface SpatialBox {
  * (normalized 0-1000, y before x).
  */
 export const SPATIAL_EXTRACTION_PROMPT = [
-  "You are an object-detection system. The image is a top-down view of a single",
-  "room from a floor plan / 3D overview.",
+  "You are an object-detection system. The image is a top-down (orthographic)",
+  "crop of a 2D ARCHITECTURAL FLOOR PLAN showing a single room. Read the plan",
+  "symbols: doors are an arc/swing drawn inside a gap in a wall; windows are thin",
+  "parallel lines or a break in a wall; furniture is drawn as outline symbols",
+  "(bed with pillows, sofa, table with chairs, wardrobe, toilet, sink, bathtub).",
+  "Always return every window and door, even if the room has no furniture.",
   "Detect EVERY individual piece of furniture and every fixture, plus all windows",
   "and doors. Be exhaustive: a typical furnished room contains 4-10 items (e.g. a",
   "bedroom has a bed, two nightstands, a wardrobe/closet, a dresser or media unit,",
