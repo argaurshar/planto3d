@@ -53,7 +53,7 @@ export default function OverviewView({
             />
             {loading && (
               <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/50 text-sm text-neutral-200 backdrop-blur-sm">
-                Generating axonometric overview…
+                Generating axonometric overview… this usually takes 1–3 minutes.
               </div>
             )}
           </div>

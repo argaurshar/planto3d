@@ -44,6 +44,17 @@ function kontextModel(): string {
   return process.env.NEXT_PUBLIC_KIE_KONTEXT_MODEL || "flux-kontext-max";
 }
 
+// Image jobs regularly take 2-3 minutes, so poll generously: giving up early
+// abandons an image kie.ai has already generated and billed for. kie.ai also
+// reports "generate task timeout" on slow jobs that then succeed, so that
+// message is treated as transient rather than terminal.
+const POLL_TIMEOUT_MS = 300_000;
+const POLL_INTERVAL_MS = 3000;
+
+function isTransientFailure(msg?: string | null): boolean {
+  return /timeou?t|timed out|queue|retry|pending/i.test(msg || "");
+}
+
 const KONTEXT_GENERATE_URL = "https://api.kie.ai/api/v1/flux/kontext/generate";
 const KONTEXT_RECORD_URL = "https://api.kie.ai/api/v1/flux/kontext/record-info";
 
@@ -103,7 +114,7 @@ async function createTask(prompt: string, imageUrls: string[], apiKey: string): 
 }
 
 async function pollTask(taskId: string, apiKey: string): Promise<string> {
-  const deadline = Date.now() + 110_000;
+  const deadline = Date.now() + POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const res = await fetch(`${RECORD_INFO_URL}?taskId=${encodeURIComponent(taskId)}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
@@ -122,11 +133,15 @@ async function pollTask(taskId: string, apiKey: string): Promise<string> {
         }
         throw new Error("Task succeeded but returned no image URL.");
       }
-      if (d?.state === "fail") throw new Error(d.failMsg || "Generation failed at kie.ai.");
+      if (d?.state === "fail" && !isTransientFailure(d.failMsg)) {
+        throw new Error(d.failMsg || "Generation failed at kie.ai.");
+      }
     }
-    await sleep(2500);
+    await sleep(POLL_INTERVAL_MS);
   }
-  throw new Error("Generation timed out. Please try again.");
+  throw new Error(
+    "Generation is still running after 5 minutes. kie.ai may yet finish it — check your kie.ai dashboard for the result, or try again.",
+  );
 }
 
 /** Resolve data URLs (uploaded) or http(s) URLs (passed through) to hosted URLs. */
@@ -194,7 +209,7 @@ export async function generateKontextImageBrowser(
   }
 
   const taskId = json.data.taskId;
-  const deadline = Date.now() + 110_000;
+  const deadline = Date.now() + POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const poll = await fetch(`${KONTEXT_RECORD_URL}?taskId=${encodeURIComponent(taskId)}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
@@ -210,14 +225,17 @@ export async function generateKontextImageBrowser(
           if (url) return url;
           throw new Error("Kontext task succeeded but returned no image URL.");
         }
-        if (d.successFlag === 2 || d.successFlag === 3) {
+        if (
+          (d.successFlag === 2 || d.successFlag === 3) &&
+          !isTransientFailure(d.errorMessage)
+        ) {
           throw new Error(d.errorMessage || "Kontext generation failed at kie.ai.");
         }
       }
     }
-    await sleep(2500);
+    await sleep(POLL_INTERVAL_MS);
   }
-  throw new Error("Kontext generation timed out. Please try again.");
+  throw new Error("The room render is still running after 5 minutes. Please try again.");
 }
 
 type ChatContent =

@@ -7,7 +7,8 @@ import { DEFAULT_BRIEF } from "@/lib/styles";
 import type { DesignBrief, GenerateImageResponse } from "@/lib/types";
 
 // Image generation is async at kie.ai (create + poll); allow a generous timeout.
-export const maxDuration = 120;
+// Overview generation has been observed at ~160s, so allow the full poll window.
+export const maxDuration = 300;
 
 // Cap on the base64 data-URL *string* length (~10MB of characters ≈ ~7MB image).
 const MAX_DATA_URL_CHARS = 10 * 1024 * 1024;
