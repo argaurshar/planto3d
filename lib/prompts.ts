@@ -133,27 +133,30 @@ export function roomRenderPrompt(
   const style = resolveStyleDescriptor(brief);
   const blockoutLead = hasBlockout
     ? [
-        "The provided image is a COLOUR-CODED 3D massing map of this room from an",
-        "eye-level viewpoint. Each coloured block marks the exact position, size and",
-        "orientation of one item; the colour gives its type:",
-        "BLUE = bed, GREEN = seating (sofa/chair), ORANGE = storage (wardrobe/",
-        "cabinet/dresser/TV unit), AMBER/YELLOW = table/desk/nightstand, TEAL =",
-        "bathroom fixture (sink/bath/toilet), PURPLE = other furniture, light-slate =",
-        "rug; CYAN panel = window, BROWN panel = door, light-grey = walls, dark-grey",
-        "= floor. Reproduce EVERY block as a real, photorealistic furniture piece of",
+        "The provided image is a matte CLAY MASSING MODEL of this room from an",
+        "eye-level viewpoint. Each block marks the exact position, size and",
+        "orientation of one item; its tone says what the item IS:",
+        "cream = bed, sage = seating (sofa/chair), dark wood = storage (wardrobe/",
+        "cabinet/dresser/TV unit), light wood = table/desk/nightstand, pale blue =",
+        "bathroom fixture (sink/bath/toilet), sand = rug, grey = other furniture;",
+        "bright panel = window, wood panel = door, off-white = walls, greige =",
+        "floor. Reproduce EVERY block as a real, photorealistic furniture piece of",
         "that exact type at that exact position, size and count, and keep the camera",
         "viewpoint, room proportions and wall/window/door layout. Do NOT move, add,",
-        "remove, resize or recolour anything; do not invent furniture that has no",
-        "block. Render real materials and lighting — the output must NOT show flat",
-        "colours or blocks.",
+        "remove or resize anything, and do not invent furniture that has no block.",
+        "Take the final colours and finishes from the style below, not from the",
+        "clay model. Render real materials and lighting — no flat blocks may remain.",
       ].join(" ")
     : "";
   const base = [
     blockoutLead,
     interiorPrompt.trim(),
     `Overall style: ${style}. Lighting: ${brief.lighting}.`,
-    "Photorealistic architectural interior render, natural EYE-LEVEL perspective",
-    "(as if standing in the room), realistic materials and lighting, high detail.",
+    "Interior architectural photograph, natural EYE-LEVEL perspective (as if",
+    "standing in the room), 24mm lens, natural daylight with soft directional",
+    "shadows, physically based materials with visible wood grain and fabric",
+    "weave, true-to-life colour, sharp focus — a photograph, NOT a 3D render or",
+    "CGI.",
     "Preserve the exact proportions and spatial arrangement described above; do",
     "not add, remove or rearrange any walls, windows, doors or furniture.",
     "No text, no watermark, no dimensions, no floor-plan lines, NOT a top-down view.",
@@ -196,20 +199,27 @@ export function kontextRenderPrompt(
     corrections && corrections.length
       ? `IMPORTANT — a previous attempt got these wrong, fix exactly these and change nothing else: ${corrections.join("; ")}. `
       : "";
+  // Phrased as an EDIT INSTRUCTION, not a scene description: with a start image
+  // that is what Kontext responds to. Materials and photographic language carry
+  // most of the weight, because the geometry is already fixed by the image.
   return [
     fix,
-    "Turn this colour-coded 3D room mock-up into a photorealistic interior",
-    "photograph taken from this exact camera position. Keep every wall, the",
-    "window and door positions, and the position, size and count of every",
-    "coloured block exactly as shown. Replace each block with real furniture by",
-    "colour: blue = bed, green = seating, orange = wardrobe/storage, yellow =",
-    "table/desk/nightstand, teal = bathroom fixture, purple = other furniture,",
-    "light-slate = rug; cyan wall panel = window with daylight, brown wall panel",
-    "= door. Do not move, add, remove or resize anything; no flat colours or",
-    "blocks may remain in the output.",
+    "Rephotograph this room as a real interior photograph.",
+    "The input is a matte clay massing model: keep its camera, room proportions,",
+    "walls, window and door openings, and the exact position, footprint and",
+    "height of every object.",
+    "The block tones only say what each object IS (cream = bed, sage = seating,",
+    "dark wood = wardrobe/storage, light wood = table/desk/nightstand, pale blue",
+    "= bathroom fixture, sand = rug, grey = other furniture; bright panel =",
+    "window, wood panel = door). Replace every block with a real, fully detailed",
+    "piece of that type — proper materials, upholstery, bedding, hardware and",
+    "edge thickness. Nothing flat, blocky or untextured may remain.",
     capAtSentence(interiorPrompt, 700),
-    `Style: ${style}. Lighting: ${brief.lighting}. Photorealistic materials and`,
-    "natural light, high detail.",
+    `Materials and style: ${style}. Lighting: ${brief.lighting}.`,
+    "Interior architectural photograph, 24mm lens, natural daylight with soft",
+    "directional shadows, physically based materials with visible wood grain and",
+    "fabric weave, true-to-life colour, sharp focus.",
+    "It must look like a photograph, NOT a 3D render, CGI or video-game image.",
   ]
     .filter(Boolean)
     .join(" ");

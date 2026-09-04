@@ -354,7 +354,11 @@ function spotPoint(wall: Wall, along: number): { x: number; y: number } {
 }
 
 export function cameraSpot(boxes: SpatialBox[]): CameraSpot {
-  const clamp = (v: number) => Math.min(940, Math.max(60, v));
+  // Pulled toward the middle of its wall. Standing hard against a corner puts
+  // whatever occupies that corner across half the frame — a door in the corner
+  // of a small bedroom left a wardrobe filling a third of the render — while
+  // keeping some offset preserves the sense of entering from the door side.
+  const clamp = (v: number) => Math.min(700, Math.max(300, 500 + (v - 500) * 0.45));
 
   // 1. A door, preferring a plain entrance over balcony/closet doors.
   const doors = boxes.filter((b) => isDoorLabel(b.label));
