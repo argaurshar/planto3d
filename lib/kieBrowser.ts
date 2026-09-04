@@ -145,7 +145,7 @@ async function pollTask(taskId: string, apiKey: string): Promise<string> {
 }
 
 /** Resolve data URLs (uploaded) or http(s) URLs (passed through) to hosted URLs. */
-async function toHostedUrl(input: string, apiKey: string, fileName: string): Promise<string> {
+export async function toHostedUrl(input: string, apiKey: string, fileName: string): Promise<string> {
   if (/^https?:\/\//i.test(input)) return input;
   return uploadBase64(input, apiKey, fileName);
 }

@@ -9,7 +9,7 @@
 // (Stage 3a, `promptWriterSystem`), then the image model renders it
 // (Stage 3b, `roomRenderPrompt`).
 
-import type { DesignBrief, RoomType } from "./types";
+import type { DesignBrief, LayoutVerification, RoomType } from "./types";
 import { extractJsonObject } from "./spatial";
 import { resolveStyleDescriptor } from "./styles";
 
@@ -236,20 +236,32 @@ export function layoutVerifierSystem(): string {
     "the photo matches the layout: the count and placement of each furniture",
     "piece, which wall the window(s) are on, and where the door is. Judge only",
     "coarse geometry (counts + which wall/zone), not style or materials.",
+    "Anything the layout marks as 'behind the viewer (not visible)' is outside",
+    "the frame by design: never report it as missing.",
     'Respond with ONLY this JSON, no prose: {"matches": true|false,',
     '"problems": ["short description of each mismatch"]} — at most 4 problems,',
     "each under 15 words. If the photo matches, problems must be [].",
   ].join(" ");
 }
 
-/** Parse the verifier's JSON reply; null on anything malformed (skip the check). */
-export function parseVerifierReply(
-  content: string,
-): { matches: boolean; problems: string[] } | null {
+const MAX_PROBLEMS = 4;
+const MAX_PROBLEM_CHARS = 160;
+
+/**
+ * Parse the verifier's JSON reply; null on anything malformed (skip the check).
+ * Problems are trimmed, de-blanked and length-capped: they are shown verbatim
+ * in the UI and prefixed to the corrective render prompt, whose interior text
+ * is itself capped, so an unbounded problem must not crowd it out.
+ */
+export function parseVerifierReply(content: string): LayoutVerification | null {
   const parsed = extractJsonObject(content);
   if (!parsed || typeof parsed.matches !== "boolean") return null;
   const problems = Array.isArray(parsed.problems)
-    ? parsed.problems.filter((p): p is string => typeof p === "string").slice(0, 4)
+    ? parsed.problems
+        .filter((p): p is string => typeof p === "string")
+        .map((p) => p.trim().slice(0, MAX_PROBLEM_CHARS))
+        .filter(Boolean)
+        .slice(0, MAX_PROBLEMS)
     : [];
   return { matches: parsed.matches, problems };
 }

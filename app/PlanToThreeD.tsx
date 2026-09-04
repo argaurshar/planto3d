@@ -13,7 +13,7 @@ import { buildBlockoutDataUrl } from "@/lib/blockout";
 import { summarizeLabels, describeLayout } from "@/lib/spatial";
 import { cropToDataUrl, type Rect } from "@/lib/crop";
 import { DEFAULT_BRIEF } from "@/lib/styles";
-import type { DesignBrief, RoomType } from "@/lib/types";
+import type { DesignBrief, LayoutVerification, RoomType } from "@/lib/types";
 
 type Step = "upload" | "overview" | "select" | "roomSetup" | "roomPrompt" | "room";
 type Stage = "idle" | "writing" | "rendering";
@@ -24,6 +24,12 @@ export type LayoutLock = {
   count: number;
   /** Human summary of detected labels, e.g. "bed, 2 nightstands, window". */
   summary: string;
+};
+
+/** One render of the selected room, with its own layout check (if any). */
+export type RoomVersion = {
+  url: string;
+  verification?: LayoutVerification;
 };
 
 interface State {
@@ -40,15 +46,12 @@ interface State {
   layoutLock: LayoutLock;
   /** Detected-layout description used to verify renders (from describeLayout). */
   layoutText: string;
-  /** Latest render's layout verification (true/false; null = not checked). */
-  verified: boolean | null;
-  /** The verifier's stated mismatches for the latest render, if it failed. */
-  verifyProblems: string[];
   roomType: RoomType;
   /** Per-room style override (defaults to the brief's style). */
   roomStyleId: string;
   roomPrompt: string;
-  roomVersions: string[];
+  /** Every render of this room, each carrying its own verification. */
+  roomVersions: RoomVersion[];
   currentVersion: number;
   /** Increments on each room render to vary the prompt. */
   variation: number;
@@ -75,12 +78,27 @@ type Action =
   | { type: "EDIT_PROMPT"; value: string }
   | { type: "RENDER_START" }
   | { type: "REGEN_START" }
-  | { type: "ROOM_DONE"; dataUrl: string; verified?: boolean; problems?: string[] }
+  | { type: "ROOM_DONE"; version: RoomVersion }
   | { type: "SET_VERSION"; index: number }
   | { type: "EDIT_PROMPT_STEP" }
   | { type: "PICK_ANOTHER" }
   | { type: "ERROR"; message: string }
   | { type: "RESET" };
+
+/**
+ * Everything that belongs to ONE selected room. Spread into the state whenever
+ * a room is (re)selected so a new field can't be forgotten in one reset path
+ * and leak the previous room's value into the next.
+ */
+const FRESH_ROOM = {
+  blockoutDataUrl: null,
+  layoutLock: { status: "none", count: 0, summary: "" },
+  layoutText: "",
+  roomPrompt: "",
+  roomVersions: [],
+  currentVersion: 0,
+  variation: 0,
+} satisfies Partial<State>;
 
 const initialState: State = {
   step: "upload",
@@ -89,17 +107,9 @@ const initialState: State = {
   overviewDataUrl: null,
   cropDataUrl: null,
   cropAspect: 1,
-  blockoutDataUrl: null,
-  layoutLock: { status: "none", count: 0, summary: "" },
-  layoutText: "",
-  verified: null,
-  verifyProblems: [],
+  ...FRESH_ROOM,
   roomType: "auto",
   roomStyleId: DEFAULT_BRIEF.styleId,
-  roomPrompt: "",
-  roomVersions: [],
-  currentVersion: 0,
-  variation: 0,
   loading: false,
   stage: "idle",
   error: null,
@@ -134,16 +144,8 @@ function reducer(state: State, action: Action): State {
         step: "roomSetup",
         cropDataUrl: action.dataUrl,
         cropAspect: action.aspect,
-        blockoutDataUrl: null,
-        layoutLock: { status: "none", count: 0, summary: "" },
-        layoutText: "",
-        verified: null,
-        verifyProblems: [],
+        ...FRESH_ROOM,
         roomStyleId: state.brief.styleId,
-        roomPrompt: "",
-        roomVersions: [],
-        currentVersion: 0,
-        variation: 0,
         stage: "idle",
         error: null,
       };
@@ -167,7 +169,7 @@ function reducer(state: State, action: Action): State {
     case "REGEN_START":
       return { ...state, loading: true, error: null };
     case "ROOM_DONE": {
-      const roomVersions = [...state.roomVersions, action.dataUrl];
+      const roomVersions = [...state.roomVersions, action.version];
       return {
         ...state,
         step: "room",
@@ -176,8 +178,6 @@ function reducer(state: State, action: Action): State {
         roomVersions,
         currentVersion: roomVersions.length - 1,
         variation: state.variation + 1,
-        verified: action.verified ?? null,
-        verifyProblems: action.problems ?? [],
       };
     }
     case "SET_VERSION":
@@ -189,15 +189,7 @@ function reducer(state: State, action: Action): State {
         ...state,
         step: "select",
         cropDataUrl: null,
-        blockoutDataUrl: null,
-        layoutLock: { status: "none", count: 0, summary: "" },
-        layoutText: "",
-        verified: null,
-        verifyProblems: [],
-        roomPrompt: "",
-        roomVersions: [],
-        currentVersion: 0,
-        variation: 0,
+        ...FRESH_ROOM,
         loading: false,
         stage: "idle",
         error: null,
@@ -323,12 +315,13 @@ export default function PlanToThreeD() {
     void writePrompt(state.cropDataUrl, id);
   }
 
-  async function renderRoom() {
+  /** Render (first time) or regenerate — identical request, different start action. */
+  async function runRender(start: "RENDER_START" | "REGEN_START") {
     if (!state.cropDataUrl) return;
     const id = nextReq();
-    dispatch({ type: "RENDER_START" });
+    dispatch({ type: start });
     try {
-      const { image, verified, problems } = await requestRoomRender(
+      const { image, verification } = await requestRoomRender(
         state.roomPrompt,
         state.variation,
         effectiveBrief(),
@@ -336,31 +329,19 @@ export default function PlanToThreeD() {
         state.layoutText || undefined,
       );
       if (isStale(id)) return;
-      dispatch({ type: "ROOM_DONE", dataUrl: image, verified, problems });
+      dispatch({ type: "ROOM_DONE", version: { url: image, verification } });
     } catch (err) {
       if (isStale(id)) return;
       dispatch({ type: "ERROR", message: message(err) });
     }
   }
 
-  async function regenerateRoom() {
-    if (!state.cropDataUrl) return;
-    const id = nextReq();
-    dispatch({ type: "REGEN_START" });
-    try {
-      const { image, verified, problems } = await requestRoomRender(
-        state.roomPrompt,
-        state.variation,
-        effectiveBrief(),
-        state.blockoutDataUrl ?? undefined,
-        state.layoutText || undefined,
-      );
-      if (isStale(id)) return;
-      dispatch({ type: "ROOM_DONE", dataUrl: image, verified, problems });
-    } catch (err) {
-      if (isStale(id)) return;
-      dispatch({ type: "ERROR", message: message(err) });
-    }
+  function renderRoom() {
+    return runRender("RENDER_START");
+  }
+
+  function regenerateRoom() {
+    return runRender("REGEN_START");
   }
 
   // Navigation that cancels any in-flight request by bumping the token.
@@ -443,8 +424,6 @@ export default function PlanToThreeD() {
         <RoomResult
           cropDataUrl={state.cropDataUrl}
           layoutLock={state.layoutLock}
-          verified={state.verified}
-          verifyProblems={state.verifyProblems}
           versions={state.roomVersions}
           currentIndex={state.currentVersion}
           loading={state.loading}

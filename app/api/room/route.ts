@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 
-import { generateImage, generateKontextImage, KieError } from "@/lib/kie";
+import { generateImage, generateKontextImage, KieError, toHostedUrl } from "@/lib/kie";
 import { writeRoomPrompt, verifyRenderLayout } from "@/lib/kieChat";
 import { dataUrlToInline } from "@/lib/image";
 import { roomRenderPrompt, kontextRenderPrompt, fallbackRoomPrompt } from "@/lib/prompts";
 import { isAllowedReference } from "@/lib/refs";
 import { DEFAULT_BRIEF } from "@/lib/styles";
+import { renderWithVerification } from "@/lib/verifyLoop";
 import type {
   DesignBrief,
   GenerateImageResponse,
@@ -51,7 +52,8 @@ function err(message: string, status: number) {
 
 /**
  * Layout-locked render: FLUX.1 Kontext (structure-preserving edit) from the
- * blockout, then a vision-verify pass with one corrective retry. Falls back to
+ * blockout, then a vision-verify pass with one corrective retry
+ * (`renderWithVerification`, shared with the static build). Falls back to
  * nano-banana image-to-image if Kontext is unavailable.
  */
 async function renderLocked(
@@ -61,53 +63,41 @@ async function renderLocked(
   blockout: string,
   layout: string | undefined,
   deadline: number,
-): Promise<{ image: string; verified?: boolean; problems?: string[] }> {
+): Promise<Omit<GenerateImageResponse, "mimeType">> {
   const remaining = () => Math.max(0, deadline - Date.now());
-  let image: string;
-  try {
-    ({ imageUrl: image } = await generateKontextImage(
-      kontextRenderPrompt(interior, brief),
-      blockout,
-      "blockout.png",
-      { timeoutMs: remaining() },
-    ));
-  } catch (e) {
-    // Kontext unavailable → previous behavior (nano-banana img2img), but only
-    // when enough budget remains to actually finish it.
-    if (remaining() < MIN_RENDER_MS) throw e;
-    ({ imageUrl: image } = await generateImage(
-      roomRenderPrompt(interior, variation, brief, true),
-      [blockout],
-      "room.png",
-      { timeoutMs: remaining() },
-    ));
-  }
+  // Host the blockout ONCE; every generation below reuses the URL instead of
+  // re-uploading the multi-MB data URL (and paying for it out of the budget).
+  const hosted = await toHostedUrl(blockout, "blockout.png");
+  const kontext = async (corrections?: string[]) =>
+    (
+      await generateKontextImage(kontextRenderPrompt(interior, brief, corrections), hosted, "blockout.png", {
+        timeoutMs: remaining(),
+      })
+    ).imageUrl;
 
-  if (!layout) return { image };
-  const check = await verifyRenderLayout(image, layout);
-  if (!check) return { image };
-  if (check.matches) return { image, verified: true };
-
-  // One corrective retry with the verifier's findings. Skipped (and reported
-  // as unverified) when the budget can't fit another render, so the first,
-  // already-billed image is returned rather than lost to a platform timeout.
-  if (remaining() < MIN_RENDER_MS) return { image, verified: false, problems: check.problems };
-  try {
-    const retry = await generateKontextImage(
-      kontextRenderPrompt(interior, brief, check.problems),
-      blockout,
-      "blockout.png",
-      { timeoutMs: remaining() },
-    );
-    const check2 = await verifyRenderLayout(retry.imageUrl, layout);
-    return {
-      image: retry.imageUrl,
-      verified: check2 ? check2.matches : undefined,
-      problems: check2 && !check2.matches ? check2.problems : undefined,
-    };
-  } catch {
-    return { image, verified: false, problems: check.problems };
-  }
+  return renderWithVerification({
+    layout,
+    // Don't start a second (billed) render the budget can't fit.
+    canRetry: () => remaining() >= MIN_RENDER_MS,
+    verify: verifyRenderLayout,
+    render: async (corrections) => {
+      if (corrections) return kontext(corrections);
+      try {
+        return await kontext();
+      } catch (e) {
+        // Kontext unavailable → previous behavior (nano-banana img2img), but
+        // only when enough budget remains to actually finish it.
+        if (remaining() < MIN_RENDER_MS) throw e;
+        const { imageUrl } = await generateImage(
+          roomRenderPrompt(interior, variation, brief, true),
+          [hosted],
+          "room.png",
+          { timeoutMs: remaining() },
+        );
+        return imageUrl;
+      }
+    },
+  });
 }
 
 export async function POST(req: Request) {
@@ -186,8 +176,8 @@ export async function POST(req: Request) {
     if (action === "render") {
       const interior = (body.prompt ?? "").trim() || fallbackRoomPrompt(brief, roomType);
       if (blockout) {
-        const { image, verified, problems } = await renderLocked(interior, variation, brief, blockout, layout, deadline);
-        const payload: GenerateImageResponse = { image, mimeType: "image/png", verified, problems };
+        const result = await renderLocked(interior, variation, brief, blockout, layout, deadline);
+        const payload: GenerateImageResponse = { ...result, mimeType: "image/png" };
         return NextResponse.json(payload);
       }
       const { imageUrl } = await generateImage(
@@ -217,13 +207,11 @@ export async function POST(req: Request) {
       interior = fallbackRoomPrompt(brief, roomType);
     }
     if (blockout) {
-      const { image, verified, problems } = await renderLocked(interior, variation, brief, blockout, layout, deadline);
+      const result = await renderLocked(interior, variation, brief, blockout, layout, deadline);
       const payload: GenerateImageResponse & RoomPromptResponse = {
-        image,
+        ...result,
         mimeType: "image/png",
         prompt: interior,
-        verified,
-        problems,
       };
       return NextResponse.json(payload);
     }
