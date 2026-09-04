@@ -241,7 +241,7 @@ export default function Hero({ onPlanSelected }: Props) {
           </div>
 
           {/* Scene */}
-          <div className="relative aspect-[4/3] w-full bg-[#0b0f0e]">
+          <div className="relative aspect-square w-full bg-[#0b0f0e] sm:aspect-[4/3]">
             {/* Plan / 3D scene */}
             <div
               className={`absolute inset-0 flex items-start justify-center pt-[5%] transition-opacity duration-700 ${
