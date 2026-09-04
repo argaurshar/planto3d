@@ -25,6 +25,12 @@ import {
 } from "./spatial";
 import type { SpatialBox, RoomSize } from "./spatial";
 import type { DesignBrief, RoomType } from "./types";
+import {
+  POLL_INTERVAL_MS,
+  POLL_TIMEOUT_MS,
+  pollTimeoutMessage,
+  transientFailGate,
+} from "./kiePoll";
 
 const UPLOAD_URL = "https://kieai.redpandaai.co/api/file-base64-upload";
 const CREATE_TASK_URL = "https://api.kie.ai/api/v1/jobs/createTask";
@@ -44,17 +50,6 @@ function detectModel(): string {
 }
 function kontextModel(): string {
   return process.env.NEXT_PUBLIC_KIE_KONTEXT_MODEL || "flux-kontext-max";
-}
-
-// Image jobs regularly take 2-3 minutes, so poll generously: giving up early
-// abandons an image kie.ai has already generated and billed for. kie.ai also
-// reports "generate task timeout" on slow jobs that then succeed, so that
-// message is treated as transient rather than terminal.
-const POLL_TIMEOUT_MS = 300_000;
-const POLL_INTERVAL_MS = 3000;
-
-function isTransientFailure(msg?: string | null): boolean {
-  return /timeou?t|timed out|queue|retry|pending/i.test(msg || "");
 }
 
 const KONTEXT_GENERATE_URL = "https://api.kie.ai/api/v1/flux/kontext/generate";
@@ -117,6 +112,7 @@ async function createTask(prompt: string, imageUrls: string[], apiKey: string): 
 
 async function pollTask(taskId: string, apiKey: string): Promise<string> {
   const deadline = Date.now() + POLL_TIMEOUT_MS;
+  const gate = transientFailGate();
   while (Date.now() < deadline) {
     const res = await fetch(`${RECORD_INFO_URL}?taskId=${encodeURIComponent(taskId)}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
@@ -135,15 +131,17 @@ async function pollTask(taskId: string, apiKey: string): Promise<string> {
         }
         throw new Error("Task succeeded but returned no image URL.");
       }
-      if (d?.state === "fail" && !isTransientFailure(d.failMsg)) {
-        throw new Error(d.failMsg || "Generation failed at kie.ai.");
+      if (d?.state === "fail") {
+        // Transient "generate task timeout" is tolerated for a grace window;
+        // anything else, or a fail that persists, surfaces the real message.
+        if (!gate.tolerate(d.failMsg)) throw new Error(d.failMsg || "Generation failed at kie.ai.");
+      } else {
+        gate.reset();
       }
     }
     await sleep(POLL_INTERVAL_MS);
   }
-  throw new Error(
-    "Generation is still running after 5 minutes. kie.ai may yet finish it — check your kie.ai dashboard for the result, or try again.",
-  );
+  throw new Error(pollTimeoutMessage("Generation"));
 }
 
 /** Resolve data URLs (uploaded) or http(s) URLs (passed through) to hosted URLs. */
@@ -212,6 +210,7 @@ export async function generateKontextImageBrowser(
 
   const taskId = json.data.taskId;
   const deadline = Date.now() + POLL_TIMEOUT_MS;
+  const gate = transientFailGate();
   while (Date.now() < deadline) {
     const poll = await fetch(`${KONTEXT_RECORD_URL}?taskId=${encodeURIComponent(taskId)}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
@@ -227,17 +226,18 @@ export async function generateKontextImageBrowser(
           if (url) return url;
           throw new Error("Kontext task succeeded but returned no image URL.");
         }
-        if (
-          (d.successFlag === 2 || d.successFlag === 3) &&
-          !isTransientFailure(d.errorMessage)
-        ) {
-          throw new Error(d.errorMessage || "Kontext generation failed at kie.ai.");
+        if (d.successFlag === 2 || d.successFlag === 3) {
+          if (!gate.tolerate(d.errorMessage)) {
+            throw new Error(d.errorMessage || "Kontext generation failed at kie.ai.");
+          }
+        } else {
+          gate.reset();
         }
       }
     }
     await sleep(POLL_INTERVAL_MS);
   }
-  throw new Error("The room render is still running after 5 minutes. Please try again.");
+  throw new Error(pollTimeoutMessage("The room render"));
 }
 
 type ChatContent =
@@ -300,8 +300,11 @@ async function detectOnceBrowser(
   return boxes;
 }
 
-/** Best-effort spatial detection on the room crop → { layout, boxes } ([] on failure). */
-/** Read the plan crop's printed room dimensions. Best-effort; null on failure. */
+/**
+ * Read the plan crop's printed room dimensions. Best-effort; null on failure.
+ * This is text reading, not spatial reasoning, so it runs on the cheaper chat
+ * model rather than the detection model.
+ */
 async function detectRoomSizeBrowser(
   imageUrl: string,
   apiKey: string,
@@ -314,7 +317,7 @@ async function detectRoomSizeBrowser(
         { type: "image_url", image_url: { url: imageUrl } },
       ],
       apiKey,
-      detectModel(),
+      chatModel(),
     );
     return parseRoomDimensions(content);
   } catch {
@@ -322,6 +325,7 @@ async function detectRoomSizeBrowser(
   }
 }
 
+/** Best-effort spatial detection on the room crop → { layout, boxes } ([] on failure). */
 async function detectLayoutBrowser(
   imageUrl: string,
   apiKey: string,

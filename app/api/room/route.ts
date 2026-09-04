@@ -16,6 +16,15 @@ import type {
 // Kontext render + verify + one corrective retry can chain two generations.
 export const maxDuration = 300;
 
+// Every generation in this route draws from ONE budget derived from
+// maxDuration, with headroom for upload/createTask, the verifier calls and the
+// JSON response, so the platform never kills the function mid-poll and an
+// already-billed image is never lost.
+const ROUTE_BUDGET_MS = maxDuration * 1000 - 20_000;
+// Don't start a second render (fallback or corrective retry) with less than
+// this left — it could not finish, and would only burn the budget.
+const MIN_RENDER_MS = 90_000;
+
 // Cap on the base64 data-URL *string* length (~10MB of characters ≈ ~7MB image).
 const MAX_DATA_URL_CHARS = 10 * 1024 * 1024;
 
@@ -50,20 +59,27 @@ async function renderLocked(
   variation: number,
   brief: DesignBrief,
   blockout: string,
-  layout?: string,
+  layout: string | undefined,
+  deadline: number,
 ): Promise<{ image: string; verified?: boolean }> {
+  const remaining = () => Math.max(0, deadline - Date.now());
   let image: string;
   try {
     ({ imageUrl: image } = await generateKontextImage(
       kontextRenderPrompt(interior, brief),
       blockout,
+      "blockout.png",
+      { timeoutMs: remaining() },
     ));
-  } catch {
-    // Kontext unavailable → previous behavior (nano-banana img2img).
+  } catch (e) {
+    // Kontext unavailable → previous behavior (nano-banana img2img), but only
+    // when enough budget remains to actually finish it.
+    if (remaining() < MIN_RENDER_MS) throw e;
     ({ imageUrl: image } = await generateImage(
       roomRenderPrompt(interior, variation, brief, true),
       [blockout],
       "room.png",
+      { timeoutMs: remaining() },
     ));
   }
 
@@ -72,12 +88,16 @@ async function renderLocked(
   if (!check) return { image };
   if (check.matches) return { image, verified: true };
 
-  // One corrective retry with the verifier's findings; keep it even if the
-  // second check still fails (report verified: false so the UI can say so).
+  // One corrective retry with the verifier's findings. Skipped (and reported
+  // as unverified) when the budget can't fit another render, so the first,
+  // already-billed image is returned rather than lost to a platform timeout.
+  if (remaining() < MIN_RENDER_MS) return { image, verified: false };
   try {
     const retry = await generateKontextImage(
       kontextRenderPrompt(interior, brief, check.problems),
       blockout,
+      "blockout.png",
+      { timeoutMs: remaining() },
     );
     const check2 = await verifyRenderLayout(retry.imageUrl, layout);
     return { image: retry.imageUrl, verified: check2 ? check2.matches : undefined };
@@ -134,6 +154,9 @@ export async function POST(req: Request) {
     }
   }
 
+  const deadline = Date.now() + ROUTE_BUDGET_MS;
+  const remaining = () => Math.max(1000, deadline - Date.now());
+
   try {
     // Stage 3a: write (or fall back to a templated prompt). Returns the boxes too
     // so the client can build the eye-level blockout.
@@ -159,7 +182,7 @@ export async function POST(req: Request) {
     if (action === "render") {
       const interior = (body.prompt ?? "").trim() || fallbackRoomPrompt(brief, roomType);
       if (blockout) {
-        const { image, verified } = await renderLocked(interior, variation, brief, blockout, layout);
+        const { image, verified } = await renderLocked(interior, variation, brief, blockout, layout, deadline);
         const payload: GenerateImageResponse = { image, mimeType: "image/png", verified };
         return NextResponse.json(payload);
       }
@@ -167,21 +190,30 @@ export async function POST(req: Request) {
         roomRenderPrompt(interior, variation, brief, false),
         [],
         "room.png",
+        { timeoutMs: remaining() },
       );
       const payload: GenerateImageResponse = { image: imageUrl, mimeType: "image/png" };
       return NextResponse.json(payload);
     }
 
-    // action === "auto": write (from the crop) then render.
+    // action === "auto": write (from the crop) then render. The dimension read
+    // is skipped: this path never returns roomSize, so it would be paid for and
+    // discarded.
     let interior: string;
     try {
-      const r = await writeRoomPrompt({ cropDataUrl: room!, brief, roomType, overviewUrl: reference });
+      const r = await writeRoomPrompt({
+        cropDataUrl: room!,
+        brief,
+        roomType,
+        overviewUrl: reference,
+        needRoomSize: false,
+      });
       interior = r.prompt;
     } catch {
       interior = fallbackRoomPrompt(brief, roomType);
     }
     if (blockout) {
-      const { image, verified } = await renderLocked(interior, variation, brief, blockout, layout);
+      const { image, verified } = await renderLocked(interior, variation, brief, blockout, layout, deadline);
       const payload: GenerateImageResponse & RoomPromptResponse = {
         image,
         mimeType: "image/png",
@@ -194,6 +226,7 @@ export async function POST(req: Request) {
       roomRenderPrompt(interior, variation, brief, false),
       [],
       "room.png",
+      { timeoutMs: remaining() },
     );
     const payload: GenerateImageResponse & RoomPromptResponse = {
       image: imageUrl,

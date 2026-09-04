@@ -10,6 +10,7 @@
 // (Stage 3b, `roomRenderPrompt`).
 
 import type { DesignBrief, RoomType } from "./types";
+import { extractJsonObject } from "./spatial";
 import { resolveStyleDescriptor } from "./styles";
 
 const AXONOMETRIC_RULES = [
@@ -235,24 +236,12 @@ export function layoutVerifierSystem(): string {
 export function parseVerifierReply(
   content: string,
 ): { matches: boolean; problems: string[] } | null {
-  if (!content) return null;
-  const text = content.replace(/^```[a-z]*\s*/i, "").replace(/\s*```$/i, "");
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end <= start) return null;
-  try {
-    const parsed = JSON.parse(text.slice(start, end + 1)) as {
-      matches?: unknown;
-      problems?: unknown;
-    };
-    if (typeof parsed.matches !== "boolean") return null;
-    const problems = Array.isArray(parsed.problems)
-      ? parsed.problems.filter((p): p is string => typeof p === "string").slice(0, 4)
-      : [];
-    return { matches: parsed.matches, problems };
-  } catch {
-    return null;
-  }
+  const parsed = extractJsonObject(content);
+  if (!parsed || typeof parsed.matches !== "boolean") return null;
+  const problems = Array.isArray(parsed.problems)
+    ? parsed.problems.filter((p): p is string => typeof p === "string").slice(0, 4)
+    : [];
+  return { matches: parsed.matches, problems };
 }
 
 /**
@@ -268,9 +257,9 @@ export function fallbackRoomPrompt(
   return [
     `Photorealistic architectural interior render of a ${room}, natural eye-level`,
     "perspective as if standing near the doorway looking into the space.",
-    "Reconstruct the room from the overview crop, preserving the exact spatial",
-    "arrangement, furniture positions and counts, and window and door positions",
-    "— add nothing extra and do not rearrange anything.",
+    "Lay the room out exactly as the floor plan shows it: keep every furniture",
+    "piece, count and position, and the window and door placement — add nothing",
+    "extra and do not rearrange anything.",
     `STYLE: ${style}. Lighting: ${brief.lighting}.`,
   ].join(" ");
 }

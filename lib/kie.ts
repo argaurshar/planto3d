@@ -1,5 +1,12 @@
 import "server-only";
 
+import {
+  POLL_INTERVAL_MS,
+  POLL_TIMEOUT_MS,
+  pollTimeoutMessage,
+  transientFailGate,
+} from "./kiePoll";
+
 /**
  * Server-only client for kie.ai's image models (default `nano-banana-2`).
  *
@@ -15,23 +22,6 @@ const MODEL = process.env.KIE_IMAGE_MODEL || "nano-banana-2";
 const RESOLUTION = process.env.KIE_IMAGE_RESOLUTION || "1K";
 // Structure-preserving edit model used for the blockout → photoreal render.
 const KONTEXT_MODEL = process.env.KIE_KONTEXT_MODEL || "flux-kontext-max";
-
-// Image jobs regularly take 2-3 minutes (nano-banana-2 has been observed at
-// 160s), so the poll window must be generously longer than the model's worst
-// case: giving up early abandons an image kie.ai has already generated and
-// billed for.
-const POLL_TIMEOUT_MS = 300_000;
-const POLL_INTERVAL_MS = 3000;
-
-/**
- * kie.ai reports a failure message like "generate task timeout" on slow jobs
- * even though the task often keeps running and then succeeds (the result shows
- * up in the kie.ai dashboard). Treat those as transient and keep polling to our
- * own deadline; any other failure message is terminal.
- */
-function isTransientFailure(msg?: string | null): boolean {
-  return /timeou?t|timed out|queue|retry|pending/i.test(msg || "");
-}
 
 const UPLOAD_URL = "https://kieai.redpandaai.co/api/file-base64-upload";
 const CREATE_TASK_URL = "https://api.kie.ai/api/v1/jobs/createTask";
@@ -190,7 +180,8 @@ export async function createTask(
   return taskId;
 }
 
-interface PollOptions {
+export interface PollOptions {
+  /** Total time budget for the call (upload + create + poll), ms. */
   timeoutMs?: number;
   intervalMs?: number;
 }
@@ -204,6 +195,7 @@ export async function pollTask(
 ): Promise<string> {
   const key = getApiKey();
   const deadline = Date.now() + timeoutMs;
+  const gate = transientFailGate();
 
   while (Date.now() < deadline) {
     let res: Response;
@@ -238,8 +230,15 @@ export async function pollTask(
         if (!url) throw new KieError("Task succeeded but returned no image URL.");
         return url;
       }
-      if (state === "fail" && !isTransientFailure(failMsg)) {
-        throw new KieError(failMsg || "Generation failed at kie.ai.");
+      if (state === "fail") {
+        // Tolerate kie.ai's transient "generate task timeout" for a grace
+        // window (it flips to success); anything else, or a fail that
+        // persists past the grace window, surfaces the real message.
+        if (!gate.tolerate(failMsg)) {
+          throw new KieError(failMsg || "Generation failed at kie.ai.");
+        }
+      } else {
+        gate.reset();
       }
       // state === "waiting" (or unknown) → keep polling.
     }
@@ -247,10 +246,7 @@ export async function pollTask(
     await sleep(intervalMs);
   }
 
-  throw new KieError(
-    "Generation is still running after 5 minutes. kie.ai may yet finish it — check your kie.ai dashboard for the result, or try again.",
-    504,
-  );
+  throw new KieError(pollTimeoutMessage("Generation", timeoutMs), 504);
 }
 
 function safeParse(json?: string): { resultUrls?: string[] } | null {
@@ -281,14 +277,22 @@ export async function generateImage(
   prompt: string,
   inputs: string[],
   fileName = "plan.png",
+  opts: PollOptions = {},
 ): Promise<{ imageUrl: string }> {
+  // `timeoutMs` is the budget for the WHOLE call, so upload/createTask time
+  // comes out of the poll window rather than being added on top of it.
+  const started = Date.now();
+  const budget = opts.timeoutMs ?? POLL_TIMEOUT_MS;
   const imageUrls = await Promise.all(
     inputs.map((input, i) =>
       toHostedUrl(input, inputs.length > 1 ? `${i}-${fileName}` : fileName),
     ),
   );
   const taskId = await createTask(prompt, imageUrls);
-  const imageUrl = await pollTask(taskId);
+  const imageUrl = await pollTask(taskId, {
+    timeoutMs: Math.max(1000, budget - (Date.now() - started)),
+    intervalMs: opts.intervalMs,
+  });
   return { imageUrl };
 }
 
@@ -318,8 +322,12 @@ export async function generateKontextImage(
   prompt: string,
   input: string,
   fileName = "blockout.png",
+  opts: PollOptions = {},
 ): Promise<{ imageUrl: string }> {
   const key = getApiKey();
+  const started = Date.now();
+  const budget = opts.timeoutMs ?? POLL_TIMEOUT_MS;
+  const intervalMs = opts.intervalMs ?? POLL_INTERVAL_MS;
   const inputImage = await toHostedUrl(input, fileName);
 
   let res: Response;
@@ -354,7 +362,8 @@ export async function generateKontextImage(
   }
 
   const taskId = json.data.taskId;
-  const deadline = Date.now() + POLL_TIMEOUT_MS;
+  const deadline = started + budget;
+  const gate = transientFailGate();
   while (Date.now() < deadline) {
     let poll: Response;
     try {
@@ -362,7 +371,7 @@ export async function generateKontextImage(
         headers: { Authorization: `Bearer ${key}` },
       });
     } catch {
-      await sleep(POLL_INTERVAL_MS);
+      await sleep(intervalMs);
       continue;
     }
     const info = (await poll.json().catch(() => null)) as
@@ -376,17 +385,15 @@ export async function generateKontextImage(
         if (!url) throw new KieError("Kontext task succeeded but returned no image URL.");
         return { imageUrl: url };
       }
-      if (
-        (d.successFlag === 2 || d.successFlag === 3) &&
-        !isTransientFailure(d.errorMessage)
-      ) {
-        throw new KieError(d.errorMessage || "Kontext generation failed at kie.ai.");
+      if (d.successFlag === 2 || d.successFlag === 3) {
+        if (!gate.tolerate(d.errorMessage)) {
+          throw new KieError(d.errorMessage || "Kontext generation failed at kie.ai.");
+        }
+      } else {
+        gate.reset();
       }
     }
-    await sleep(POLL_INTERVAL_MS);
+    await sleep(intervalMs);
   }
-  throw new KieError(
-    "The room render is still running after 5 minutes. Please try again.",
-    504,
-  );
+  throw new KieError(pollTimeoutMessage("The room render", budget), 504);
 }
