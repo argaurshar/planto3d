@@ -1,7 +1,8 @@
 "use client";
 
 import { useReducer, useRef } from "react";
-import PlanUploader from "./components/PlanUploader";
+import Hero from "./components/Hero";
+import StepBar from "./components/StepBar";
 import OverviewView from "./components/OverviewView";
 import RoomSelector from "./components/RoomSelector";
 import RoomSetup from "./components/RoomSetup";
@@ -377,10 +378,10 @@ export default function PlanToThreeD() {
   return (
     <section className="space-y-6">
       {state.step === "upload" && (
-        <PlanUploader
-          onPlanSelected={(dataUrl) => dispatch({ type: "SET_PLAN", dataUrl })}
-        />
+        <Hero onPlanSelected={(dataUrl) => dispatch({ type: "SET_PLAN", dataUrl })} />
       )}
+
+      {state.step !== "upload" && <StepBar step={state.step} />}
 
       {state.step === "overview" && state.planDataUrl && (
         <OverviewView
