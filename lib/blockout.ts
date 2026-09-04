@@ -14,6 +14,7 @@ import {
   type CameraSpot,
   furnitureCategory,
   furnitureHeight,
+  isBehindViewer,
   isDoorLabel,
   isOpeningLabel,
   nearestWall,
@@ -243,7 +244,8 @@ export async function buildBlockoutDataUrl(
         // An opening on the wall the camera stands outside of is behind the
         // viewer. Its wall is culled, but the panel used to be drawn anyway —
         // a 2m door slab 1.8m in front of the lens, eating a third of the frame.
-        if (wall === spot.wall) continue;
+        // (Same predicate the layout text uses to mark it "not visible".)
+        if (isBehindViewer(spot, wall)) continue;
         const isDoor = isDoorLabel(b.label);
         // Doors are clay; a window should read as a bright light source.
         const mat = isDoor ? clay(COLORS.door) : flat(COLORS.window);

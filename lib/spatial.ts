@@ -408,8 +408,19 @@ function viewerRelative(from: Wall, cx: number, cy: number): { depth: number; si
   }
 }
 
-function wallWordFrom(from: Wall, wall: Wall): string {
-  if (wall === from) return "wall behind the viewer (not visible)";
+/**
+ * Whether a wall is the one the camera stands outside of — behind the viewer,
+ * so nothing on it is in frame. The ONE predicate shared by the blockout
+ * (which culls that wall and its openings) and the layout text (which marks
+ * such openings "not visible" for the prompt writer and the verifier).
+ */
+export function isBehindViewer(spot: CameraSpot, wall: Wall): boolean {
+  return wall === spot.wall;
+}
+
+function wallWordFrom(spot: CameraSpot, wall: Wall): string {
+  const from = spot.wall;
+  if (isBehindViewer(spot, wall)) return "wall behind the viewer (not visible)";
   if (wall === OPPOSITE[from]) return "back wall (facing the viewer)";
   return wall === VIEWER_LEFT[from] ? "left wall" : "right wall";
 }
@@ -442,7 +453,7 @@ export function describeLayout(boxes: SpatialBox[]): string {
   for (const [label, group] of byLabel) {
     const places = group.map((b) => {
       const { cx, cy } = boxCenter(b);
-      if (isOpeningLabel(label)) return wallWordFrom(from, nearestWall(cx, cy));
+      if (isOpeningLabel(label)) return wallWordFrom(spot, nearestWall(cx, cy));
       const { depth, side } = viewerRelative(from, cx, cy);
       const vert = band(depth, "front", "middle", "back");
       const horiz = band(side, "left", "center", "right");

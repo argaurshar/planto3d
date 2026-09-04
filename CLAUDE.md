@@ -97,7 +97,16 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
      placement). On mismatch it re-renders ONCE with the verifier's corrections,
      then reports the result as a **Verified ✓ / Check failed** badge; on
      failure the verifier's `problems` are returned and shown under the header
-     so the badge is diagnosable. Fallbacks:
+     so the badge is diagnosable. The render → verify → retry loop is ONE
+     transport-agnostic function (`lib/verifyLoop.ts`) shared by the server
+     route and the static build; it skips the retry when the verifier lists
+     no problems (nothing to correct) or the budget can't fit it, and keeps
+     the first pass's problems if the re-check itself is unavailable. The
+     verifier is told that openings marked "behind the viewer (not visible)"
+     are outside the frame by design (`isBehindViewer` in `lib/spatial.ts` is
+     the one predicate the blockout cull and the layout text share). Each
+     version in `roomVersions[]` carries its own `verification`, so browsing
+     history shows the badge that belongs to that image. Fallbacks:
      Kontext unavailable → nano-banana image-to-image from the blockout; no
      blockout at all (detection/WebGL failed) → **text-to-image**. The top-down
      crop is still **never** fed to the renderer. Style/lighting from the brief
@@ -179,7 +188,8 @@ drops straight into `<img src>`.
   `renderLocked`: **FLUX.1 Kontext** edit from the blockout
   (`generateKontextImage`, `kontextRenderPrompt`), then `verifyRenderLayout`
   (vision check vs the `layout` text) with ONE corrective retry → returns
-  `{ image, verified?, problems? }`. Kontext failure falls back to nano-banana
+  `{ image, verification?: { matches, problems } }`. The blockout is hosted
+  once and its URL reused by every generation in the request. Kontext failure falls back to nano-banana
   image-to-image from the blockout; no blockout → **text-to-image**.
 - `"auto"` → write (from the crop) then the same render path in one call.
 
@@ -221,6 +231,7 @@ lib/
                         #   printed-dimension reader; cameraSpot (shared viewpoint)
   kiePoll.ts            # shared poll policy for both clients: 5-min window, transient
                         #   "generate task timeout" grace (120s), timeout messages
+  verifyLoop.ts         # render → verify → one corrective retry (shared by route + static)
   blockout.ts           # eye-level 3D blockout (Three.js) from boxes → render lock
   prompts.ts            # overview + prompt-writer system + room render templates
   styles.ts             # interior-design style presets + brief resolution

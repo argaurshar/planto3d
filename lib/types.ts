@@ -49,6 +49,14 @@ export interface DesignBrief {
   dwelling?: string;
 }
 
+/** Outcome of the post-render layout check (vision LLM vs the detected layout). */
+export interface LayoutVerification {
+  /** true = the render matches the detected layout. */
+  matches: boolean;
+  /** The verifier's stated mismatches (short phrases); [] when it matches. */
+  problems: string[];
+}
+
 /** Response shape returned by /api/overview and the room render action. */
 export interface GenerateImageResponse {
   /**
@@ -58,13 +66,10 @@ export interface GenerateImageResponse {
   image: string;
   mimeType: string;
   /**
-   * Layout verification result for layout-locked room renders: true = the
-   * vision check confirmed the render matches the detected layout; false = it
-   * still mismatched after a corrective retry; undefined = check not run.
+   * Layout verification for layout-locked room renders (after the one
+   * corrective retry, if any). Absent when the check was not run.
    */
-  verified?: boolean;
-  /** The verifier's stated mismatches when `verified` is false (short phrases). */
-  problems?: string[];
+  verification?: LayoutVerification;
 }
 
 /** Response shape returned by the room "write" action (Stage 3a). */

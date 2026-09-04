@@ -4,10 +4,12 @@ import { overviewPrompt, kontextRenderPrompt } from "./prompts";
 import {
   generateImageBrowser,
   generateKontextImageBrowser,
+  toHostedUrl as toHostedUrlBrowser,
   verifyRenderLayoutBrowser,
   writeRoomPromptBrowser,
   roomRenderPrompt,
 } from "./kieBrowser";
+import { renderWithVerification } from "./verifyLoop";
 
 // In the static (GitHub Pages) build there is no server, so generation runs in
 // the browser with a user-supplied key. The server build keeps the secure
@@ -101,13 +103,8 @@ export async function requestRoomPrompt(
   return { prompt: data.prompt, boxes: data.boxes ?? [], roomSize: data.roomSize ?? null };
 }
 
-export interface RoomRenderResult {
-  image: string;
-  /** true = layout check passed; false = still off after a retry; undefined = not checked. */
-  verified?: boolean;
-  /** What the verifier objected to, so "Check failed" is diagnosable, not opaque. */
-  problems?: string[];
-}
+/** The render plus its layout check (same shape as the route's response, minus mimeType). */
+export type RoomRenderResult = Omit<GenerateImageResponse, "mimeType">;
 
 /**
  * Stage 3b: render a photorealistic eye-level interior from the (possibly
@@ -138,41 +135,24 @@ export async function requestRoomRender(
       );
       return { image };
     }
-    let image: string;
-    try {
-      image = await generateKontextImageBrowser(
-        kontextRenderPrompt(prompt, brief),
-        blockoutDataUrl!,
-        key,
-      );
-    } catch {
-      // Kontext unavailable → previous behavior (nano-banana img2img).
-      image = await generateImageBrowser(
-        roomRenderPrompt(prompt, variation, brief, true),
-        [blockoutDataUrl!],
-        key,
-        "room.png",
-      );
-    }
-    if (!layoutText) return { image };
-    const check = await verifyRenderLayoutBrowser(image, layoutText, key);
-    if (!check) return { image };
-    if (check.matches) return { image, verified: true };
-    try {
-      const retryImage = await generateKontextImageBrowser(
-        kontextRenderPrompt(prompt, brief, check.problems),
-        blockoutDataUrl!,
-        key,
-      );
-      const check2 = await verifyRenderLayoutBrowser(retryImage, layoutText, key);
-      return {
-        image: retryImage,
-        verified: check2 ? check2.matches : undefined,
-        problems: check2 && !check2.matches ? check2.problems : undefined,
-      };
-    } catch {
-      return { image, verified: false, problems: check.problems };
-    }
+    // Same render → verify → retry loop as the server route (lib/verifyLoop.ts).
+    // The blockout is uploaded once and its URL reused by every generation.
+    const hosted = await toHostedUrlBrowser(blockoutDataUrl!, key, "blockout.png");
+    return renderWithVerification({
+      layout: layoutText,
+      verify: (url, layout) => verifyRenderLayoutBrowser(url, layout, key),
+      render: async (corrections) => {
+        if (corrections) {
+          return generateKontextImageBrowser(kontextRenderPrompt(prompt, brief, corrections), hosted, key);
+        }
+        try {
+          return await generateKontextImageBrowser(kontextRenderPrompt(prompt, brief), hosted, key);
+        } catch {
+          // Kontext unavailable → previous behavior (nano-banana img2img).
+          return generateImageBrowser(roomRenderPrompt(prompt, variation, brief, true), [hosted], key, "room.png");
+        }
+      },
+    });
   }
   const data = await postJson<GenerateImageResponse>("/api/room", {
     action: "render",
@@ -182,5 +162,5 @@ export async function requestRoomRender(
     blockout: blockoutDataUrl,
     layout: layoutText,
   });
-  return { image: data.image, verified: data.verified, problems: data.problems };
+  return { image: data.image, verification: data.verification };
 }

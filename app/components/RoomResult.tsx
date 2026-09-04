@@ -1,16 +1,13 @@
 "use client";
 
 import DownloadButton from "./DownloadButton";
-import type { LayoutLock } from "../PlanToThreeD";
+import type { LayoutLock, RoomVersion } from "../PlanToThreeD";
 
 interface Props {
   cropDataUrl: string | null;
   layoutLock: LayoutLock;
-  /** Latest render's layout verification (true/false; null = not checked). */
-  verified: boolean | null;
-  /** Why the layout check failed, when it did. */
-  verifyProblems: string[];
-  versions: string[];
+  /** Every render of this room; each carries its own layout check. */
+  versions: RoomVersion[];
   currentIndex: number;
   loading: boolean;
   error: string | null;
@@ -25,8 +22,6 @@ interface Props {
 export default function RoomResult({
   cropDataUrl,
   layoutLock,
-  verified,
-  verifyProblems,
   versions,
   currentIndex,
   loading,
@@ -39,6 +34,9 @@ export default function RoomResult({
 }: Props) {
   const current = versions[currentIndex] ?? null;
   const hasMultiple = versions.length > 1;
+  // The check belongs to the version being VIEWED, not the latest render.
+  const verification = current?.verification ?? null;
+  const problemText = verification && !verification.matches ? verification.problems.join("; ") : "";
 
   return (
     <div className="card space-y-5 p-4">
@@ -67,19 +65,15 @@ export default function RoomResult({
                     Prompt-only
                   </span>
                 ))}
-              {current && verified === true && (
+              {verification?.matches === true && (
                 <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-300">
                   Verified ✓
                 </span>
               )}
-              {current && verified === false && (
+              {verification?.matches === false && (
                 <span
                   className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300"
-                  title={
-                    verifyProblems.length
-                      ? `The layout check objected to: ${verifyProblems.join("; ")}`
-                      : "The automatic layout check still found mismatches after a retry — compare against the crop and Regenerate if needed."
-                  }
+                  title="The automatic layout check still found mismatches after a retry — compare against the crop and Regenerate if needed."
                 >
                   Check failed
                 </span>
@@ -93,23 +87,23 @@ export default function RoomResult({
               )}
               {current && (
                 <DownloadButton
-                  url={current}
+                  url={current.url}
                   filename={`voxa-room-v${currentIndex + 1}.png`}
                 />
               )}
             </div>
           </figcaption>
-          {current && verified === false && verifyProblems.length > 0 && (
+          {problemText && (
             <p className="text-xs leading-relaxed text-amber-200/80">
               <span className="font-medium text-amber-300">Layout check: </span>
-              {verifyProblems.join("; ")}
+              {problemText}
             </p>
           )}
           <div className="media-frame flex min-h-[16rem] items-center justify-center">
             {current ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={current}
+                src={current.url}
                 alt="Generated photorealistic interior render of the room"
                 className="block max-h-[68vh] w-auto max-w-full"
               />

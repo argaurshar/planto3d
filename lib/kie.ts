@@ -263,7 +263,7 @@ function safeParse(json?: string): { resultUrls?: string[] } | null {
  * Already-hosted `http(s)` URLs (e.g. a previously generated overview) are
  * passed through; base64 data URLs are uploaded first.
  */
-async function toHostedUrl(input: string, fileName: string): Promise<string> {
+export async function toHostedUrl(input: string, fileName: string): Promise<string> {
   if (/^https?:\/\//i.test(input)) return input;
   return uploadBase64(input, fileName);
 }
