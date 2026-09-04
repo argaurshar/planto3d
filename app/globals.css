@@ -134,3 +134,75 @@
     box-shadow: inset 0 0 0 1px rgba(95, 224, 176, 0.4);
   }
 }
+
+/* ---------- Hero demo: CSS-3D plan extrusion + motion ----------
+   Deliberately OUTSIDE @layer components: Tailwind only emits layered rules
+   whose class names appear literally in the source, and the wall classes
+   (hero-wall-n/s/e/w) are built from a template string in Hero.tsx. */
+  .hero-floor {
+    transform-style: preserve-3d;
+    transition: transform 900ms cubic-bezier(0.22, 1, 0.36, 1);
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    background: #f7f5f0;
+    box-shadow: 0 30px 60px -30px rgba(0, 0, 0, 0.8);
+  }
+  .hero-room {
+    transform-style: preserve-3d;
+    border: 1.5px solid rgba(20, 24, 22, 0.55);
+    box-sizing: border-box;
+    outline: none;
+  }
+  .hero-room:focus-visible {
+    box-shadow: 0 0 0 3px rgba(95, 224, 176, 0.6);
+  }
+  /* Each wall is a plane standing on one edge of the room; its height animates
+     from 0 (flat plan) to full (extruded 3D). */
+  .hero-wall {
+    position: absolute;
+    background: linear-gradient(180deg, #e9e4da 0%, #b9b2a5 100%);
+    border: 1px solid rgba(20, 24, 22, 0.55);
+    box-sizing: border-box;
+    backface-visibility: visible;
+    transition: height 700ms cubic-bezier(0.22, 1, 0.36, 1), width 700ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  /* Rotation signs chosen so every wall rises toward +z (out of the floor,
+     toward the viewer); the opposite sign sinks them under the opaque floor. */
+  .hero-wall-n { left: 0; top: 0; width: 100%; height: 0; transform-origin: top; transform: rotateX(90deg); }
+  .hero-wall-s { left: 0; bottom: 0; width: 100%; height: 0; transform-origin: bottom; transform: rotateX(-90deg); }
+  .hero-wall-w { left: 0; top: 0; height: 100%; width: 0; transform-origin: left; transform: rotateY(-90deg); }
+  .hero-wall-e { right: 0; top: 0; height: 100%; width: 0; transform-origin: right; transform: rotateY(90deg); }
+  .hero-wall-n.hero-wall-up, .hero-wall-s.hero-wall-up { height: 30px; }
+  .hero-wall-w.hero-wall-up, .hero-wall-e.hero-wall-up { width: 30px; }
+  .hero-wall-up { opacity: 0.94; }
+  /* Side walls read darker, like a real extrusion under top light. */
+  .hero-wall-e, .hero-wall-w { background: linear-gradient(90deg, #d6d0c5 0%, #a39c8f 100%); }
+  .hero-furniture {
+    transition: transform 700ms cubic-bezier(0.22, 1, 0.36, 1), opacity 500ms ease;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25), 0 10px 14px -6px rgba(0, 0, 0, 0.45);
+  }
+  .hero-progress {
+    transform-origin: left;
+    animation: hero-progress linear forwards;
+  }
+  .hero-dash {
+    stroke-dasharray: 8 6;
+    animation: hero-dash 1.2s linear infinite, hero-draw 600ms ease-out;
+  }
+  .hero-pulse {
+    animation: hero-pulse 1.8s ease-out infinite;
+  }
+  .hero-pop {
+    animation: hero-pop 500ms cubic-bezier(0.34, 1.56, 0.64, 1) 350ms both;
+  }
+@keyframes hero-progress { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes hero-dash { to { stroke-dashoffset: -28; } }
+@keyframes hero-draw { from { opacity: 0; transform: scale(1.06); } to { opacity: 1; transform: scale(1); } }
+@keyframes hero-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(95, 224, 176, 0.45); }
+  100% { box-shadow: 0 0 0 26px rgba(95, 224, 176, 0); }
+}
+@keyframes hero-pop { from { opacity: 0; transform: translateY(-6px) scale(0.9); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .hero-floor, .hero-wall, .hero-furniture { transition: none; }
+  .hero-dash, .hero-pulse, .hero-pop, .hero-progress { animation: none; opacity: 1; }
+}

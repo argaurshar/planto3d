@@ -182,7 +182,9 @@ app/
   PlanToThreeD.tsx      # client state machine (the whole flow)
   components/
     KeyManager.tsx      # static build: bottom-of-app user API-key entry
-    PlanUploader.tsx    # file → data URL
+    Hero.tsx            # upload-step landing: headline + CTA + live CSS-3D demo of the pipeline
+    StepBar.tsx         # progress bar shown on every step after upload
+    PlanUploader.tsx    # file → data URL (click, drag-and-drop, or paste)
     DesignBrief.tsx     # style preset + lighting + plan metadata
     OverviewView.tsx    # brief + plan + overview + 2D↔3D CompareSlider + Approve
     CompareSlider.tsx   # before/after drag slider (2D vs 3D)
