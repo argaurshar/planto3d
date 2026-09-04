@@ -58,13 +58,21 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
      ControlNet/structural conditioning, which nano-banana / Gemini image models
      don't expose).
    - **3a.5 — layout lock (blockout)** — from the detected boxes, the client
-     builds a coarse **eye-level 3D blockout** of the room with Three.js
-     (`lib/blockout.ts`): **all four walls** + floor, a colour-coded massing box
-     per furniture item (colour by category, height by label prior), and panels
-     marking windows/doors on the nearest wall. The camera **stands at the
-     detected door looking into the room** (falling back to the emptiest wall),
-     so items against any wall — including the near wall — are in frame; the wall
-     behind the camera is culled automatically. The footprint is scaled from the
+     builds an eye-level **matte clay massing model** of the room with Three.js
+     (`lib/blockout.ts`): floor, ceiling and walls, a massing box per furniture
+     item (height by label prior), and panels marking windows/doors on the
+     nearest wall. Lambert materials plus a hemisphere/sun/ambient rig give it
+     real shading. **Its tones are muted real-material colours** (cream bed, sage
+     seating, walnut storage, light-wood tables, sand rug) rather than a
+     saturated segmentation palette: Kontext preserves colour as part of
+     structure, so the old blue/orange/purple legend came back out of the
+     renderer as a teal panel, an orange wardrobe and a purple bench. Colour
+     carry-over is now harmless because the massing already looks like a sane
+     room. The camera stands **outside** the wall carrying the detected door
+     (that wall is culled), and the floor, ceiling and flanking walls are
+     stretched by the same offset so the frame stays bounded by real surfaces —
+     standing inside a 3.4x3.0m bedroom put the eye on top of a wardrobe. The
+     viewpoint is pulled toward the middle of its wall for framing. The footprint is scaled from the
      plan's **printed dimensions** when they can be read (`ROOM_DIMENSION_PROMPT`
      / `parseRoomDimensions`, axes auto-corrected against the crop aspect), else
      from the crop aspect at an assumed size. Three.js is
@@ -72,10 +80,15 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
      ("Layout lock") is shown in `components/RoomPrompt.tsx`.
    - **3b — render** — when a blockout is present, `action:"render"` renders via
      **FLUX.1 Kontext** (`flux-kontext-max`, kie.ai's structure-preserving edit
-     API): the colour-coded blockout is the input image and the prompt carries a
-     colour→furniture legend, so the composition is enforced by the model's own
-     design rather than soft instruction → a photorealistic **eye-level interior**
-     (`components/RoomResult.tsx`).
+     API): the clay massing is the input image, so the composition is enforced by
+     the model's own design rather than soft instruction → a photorealistic
+     **eye-level interior** (`components/RoomResult.tsx`). `kontextRenderPrompt`
+     is written as an **edit instruction** ("rephotograph this room…"), which is
+     what Kontext responds to with a start image, and spends its budget on
+     materials and photographic language (lens, daylight, PBR materials, "a
+     photograph, NOT a 3D render") since the geometry already lives in the image.
+     Kontext exposes no output-resolution parameter, so realism has to come from
+     the input image and the wording.
    - **3c — verify & retry** — the finished render is checked by the vision LLM
      against the detected layout (counts + which wall for each item, window/door
      placement). On mismatch it re-renders ONCE with the verifier's corrections,
