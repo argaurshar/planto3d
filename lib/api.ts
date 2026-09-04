@@ -105,6 +105,8 @@ export interface RoomRenderResult {
   image: string;
   /** true = layout check passed; false = still off after a retry; undefined = not checked. */
   verified?: boolean;
+  /** What the verifier objected to, so "Check failed" is diagnosable, not opaque. */
+  problems?: string[];
 }
 
 /**
@@ -163,9 +165,13 @@ export async function requestRoomRender(
         key,
       );
       const check2 = await verifyRenderLayoutBrowser(retryImage, layoutText, key);
-      return { image: retryImage, verified: check2 ? check2.matches : undefined };
+      return {
+        image: retryImage,
+        verified: check2 ? check2.matches : undefined,
+        problems: check2 && !check2.matches ? check2.problems : undefined,
+      };
     } catch {
-      return { image, verified: false };
+      return { image, verified: false, problems: check.problems };
     }
   }
   const data = await postJson<GenerateImageResponse>("/api/room", {
@@ -176,5 +182,5 @@ export async function requestRoomRender(
     blockout: blockoutDataUrl,
     layout: layoutText,
   });
-  return { image: data.image, verified: data.verified };
+  return { image: data.image, verified: data.verified, problems: data.problems };
 }

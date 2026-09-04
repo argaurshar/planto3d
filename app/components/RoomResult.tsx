@@ -8,6 +8,8 @@ interface Props {
   layoutLock: LayoutLock;
   /** Latest render's layout verification (true/false; null = not checked). */
   verified: boolean | null;
+  /** Why the layout check failed, when it did. */
+  verifyProblems: string[];
   versions: string[];
   currentIndex: number;
   loading: boolean;
@@ -24,6 +26,7 @@ export default function RoomResult({
   cropDataUrl,
   layoutLock,
   verified,
+  verifyProblems,
   versions,
   currentIndex,
   loading,
@@ -72,7 +75,11 @@ export default function RoomResult({
               {current && verified === false && (
                 <span
                   className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300"
-                  title="The automatic layout check still found mismatches after a retry — compare against the crop and Regenerate if needed."
+                  title={
+                    verifyProblems.length
+                      ? `The layout check objected to: ${verifyProblems.join("; ")}`
+                      : "The automatic layout check still found mismatches after a retry — compare against the crop and Regenerate if needed."
+                  }
                 >
                   Check failed
                 </span>
@@ -92,6 +99,12 @@ export default function RoomResult({
               )}
             </div>
           </figcaption>
+          {current && verified === false && verifyProblems.length > 0 && (
+            <p className="text-xs leading-relaxed text-amber-200/80">
+              <span className="font-medium text-amber-300">Layout check: </span>
+              {verifyProblems.join("; ")}
+            </p>
+          )}
           <div className="media-frame flex min-h-[16rem] items-center justify-center">
             {current ? (
               // eslint-disable-next-line @next/next/no-img-element

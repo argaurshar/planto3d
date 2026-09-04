@@ -61,7 +61,7 @@ async function renderLocked(
   blockout: string,
   layout: string | undefined,
   deadline: number,
-): Promise<{ image: string; verified?: boolean }> {
+): Promise<{ image: string; verified?: boolean; problems?: string[] }> {
   const remaining = () => Math.max(0, deadline - Date.now());
   let image: string;
   try {
@@ -91,7 +91,7 @@ async function renderLocked(
   // One corrective retry with the verifier's findings. Skipped (and reported
   // as unverified) when the budget can't fit another render, so the first,
   // already-billed image is returned rather than lost to a platform timeout.
-  if (remaining() < MIN_RENDER_MS) return { image, verified: false };
+  if (remaining() < MIN_RENDER_MS) return { image, verified: false, problems: check.problems };
   try {
     const retry = await generateKontextImage(
       kontextRenderPrompt(interior, brief, check.problems),
@@ -100,9 +100,13 @@ async function renderLocked(
       { timeoutMs: remaining() },
     );
     const check2 = await verifyRenderLayout(retry.imageUrl, layout);
-    return { image: retry.imageUrl, verified: check2 ? check2.matches : undefined };
+    return {
+      image: retry.imageUrl,
+      verified: check2 ? check2.matches : undefined,
+      problems: check2 && !check2.matches ? check2.problems : undefined,
+    };
   } catch {
-    return { image, verified: false };
+    return { image, verified: false, problems: check.problems };
   }
 }
 
@@ -182,8 +186,8 @@ export async function POST(req: Request) {
     if (action === "render") {
       const interior = (body.prompt ?? "").trim() || fallbackRoomPrompt(brief, roomType);
       if (blockout) {
-        const { image, verified } = await renderLocked(interior, variation, brief, blockout, layout, deadline);
-        const payload: GenerateImageResponse = { image, mimeType: "image/png", verified };
+        const { image, verified, problems } = await renderLocked(interior, variation, brief, blockout, layout, deadline);
+        const payload: GenerateImageResponse = { image, mimeType: "image/png", verified, problems };
         return NextResponse.json(payload);
       }
       const { imageUrl } = await generateImage(
@@ -213,12 +217,13 @@ export async function POST(req: Request) {
       interior = fallbackRoomPrompt(brief, roomType);
     }
     if (blockout) {
-      const { image, verified } = await renderLocked(interior, variation, brief, blockout, layout, deadline);
+      const { image, verified, problems } = await renderLocked(interior, variation, brief, blockout, layout, deadline);
       const payload: GenerateImageResponse & RoomPromptResponse = {
         image,
         mimeType: "image/png",
         prompt: interior,
         verified,
+        problems,
       };
       return NextResponse.json(payload);
     }

@@ -42,6 +42,8 @@ interface State {
   layoutText: string;
   /** Latest render's layout verification (true/false; null = not checked). */
   verified: boolean | null;
+  /** The verifier's stated mismatches for the latest render, if it failed. */
+  verifyProblems: string[];
   roomType: RoomType;
   /** Per-room style override (defaults to the brief's style). */
   roomStyleId: string;
@@ -73,7 +75,7 @@ type Action =
   | { type: "EDIT_PROMPT"; value: string }
   | { type: "RENDER_START" }
   | { type: "REGEN_START" }
-  | { type: "ROOM_DONE"; dataUrl: string; verified?: boolean }
+  | { type: "ROOM_DONE"; dataUrl: string; verified?: boolean; problems?: string[] }
   | { type: "SET_VERSION"; index: number }
   | { type: "EDIT_PROMPT_STEP" }
   | { type: "PICK_ANOTHER" }
@@ -91,6 +93,7 @@ const initialState: State = {
   layoutLock: { status: "none", count: 0, summary: "" },
   layoutText: "",
   verified: null,
+  verifyProblems: [],
   roomType: "auto",
   roomStyleId: DEFAULT_BRIEF.styleId,
   roomPrompt: "",
@@ -135,6 +138,7 @@ function reducer(state: State, action: Action): State {
         layoutLock: { status: "none", count: 0, summary: "" },
         layoutText: "",
         verified: null,
+        verifyProblems: [],
         roomStyleId: state.brief.styleId,
         roomPrompt: "",
         roomVersions: [],
@@ -173,6 +177,7 @@ function reducer(state: State, action: Action): State {
         currentVersion: roomVersions.length - 1,
         variation: state.variation + 1,
         verified: action.verified ?? null,
+        verifyProblems: action.problems ?? [],
       };
     }
     case "SET_VERSION":
@@ -188,6 +193,7 @@ function reducer(state: State, action: Action): State {
         layoutLock: { status: "none", count: 0, summary: "" },
         layoutText: "",
         verified: null,
+        verifyProblems: [],
         roomPrompt: "",
         roomVersions: [],
         currentVersion: 0,
@@ -322,7 +328,7 @@ export default function PlanToThreeD() {
     const id = nextReq();
     dispatch({ type: "RENDER_START" });
     try {
-      const { image, verified } = await requestRoomRender(
+      const { image, verified, problems } = await requestRoomRender(
         state.roomPrompt,
         state.variation,
         effectiveBrief(),
@@ -330,7 +336,7 @@ export default function PlanToThreeD() {
         state.layoutText || undefined,
       );
       if (isStale(id)) return;
-      dispatch({ type: "ROOM_DONE", dataUrl: image, verified });
+      dispatch({ type: "ROOM_DONE", dataUrl: image, verified, problems });
     } catch (err) {
       if (isStale(id)) return;
       dispatch({ type: "ERROR", message: message(err) });
@@ -342,7 +348,7 @@ export default function PlanToThreeD() {
     const id = nextReq();
     dispatch({ type: "REGEN_START" });
     try {
-      const { image, verified } = await requestRoomRender(
+      const { image, verified, problems } = await requestRoomRender(
         state.roomPrompt,
         state.variation,
         effectiveBrief(),
@@ -350,7 +356,7 @@ export default function PlanToThreeD() {
         state.layoutText || undefined,
       );
       if (isStale(id)) return;
-      dispatch({ type: "ROOM_DONE", dataUrl: image, verified });
+      dispatch({ type: "ROOM_DONE", dataUrl: image, verified, problems });
     } catch (err) {
       if (isStale(id)) return;
       dispatch({ type: "ERROR", message: message(err) });
@@ -438,6 +444,7 @@ export default function PlanToThreeD() {
           cropDataUrl={state.cropDataUrl}
           layoutLock={state.layoutLock}
           verified={state.verified}
+          verifyProblems={state.verifyProblems}
           versions={state.roomVersions}
           currentIndex={state.currentVersion}
           loading={state.loading}

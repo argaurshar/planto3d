@@ -63,6 +63,8 @@ export interface GenerateImageResponse {
    * still mismatched after a corrective retry; undefined = check not run.
    */
   verified?: boolean;
+  /** The verifier's stated mismatches when `verified` is false (short phrases). */
+  problems?: string[];
 }
 
 /** Response shape returned by the room "write" action (Stage 3a). */
