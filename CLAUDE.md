@@ -72,7 +72,10 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
      (that wall is culled), and the floor, ceiling and flanking walls are
      stretched by the same offset so the frame stays bounded by real surfaces —
      standing inside a 3.4x3.0m bedroom put the eye on top of a wardrobe. The
-     viewpoint is pulled toward the middle of its wall for framing. The footprint is scaled from the
+     viewpoint is pulled toward the middle of its wall for framing. Openings
+     detected on the camera's own wall are **not drawn** (that wall is culled,
+     and a door panel 1.8m in front of the lens used to eat a third of the
+     frame). The footprint is scaled from the
      plan's **printed dimensions** when they can be read (`ROOM_DIMENSION_PROMPT`
      / `parseRoomDimensions`, axes auto-corrected against the crop aspect), else
      from the crop aspect at an assumed size. Three.js is
@@ -92,7 +95,9 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
    - **3c — verify & retry** — the finished render is checked by the vision LLM
      against the detected layout (counts + which wall for each item, window/door
      placement). On mismatch it re-renders ONCE with the verifier's corrections,
-     then reports the result as a **Verified ✓ / Check failed** badge. Fallbacks:
+     then reports the result as a **Verified ✓ / Check failed** badge; on
+     failure the verifier's `problems` are returned and shown under the header
+     so the badge is diagnosable. Fallbacks:
      Kontext unavailable → nano-banana image-to-image from the blockout; no
      blockout at all (detection/WebGL failed) → **text-to-image**. The top-down
      crop is still **never** fed to the renderer. Style/lighting from the brief
@@ -174,7 +179,7 @@ drops straight into `<img src>`.
   `renderLocked`: **FLUX.1 Kontext** edit from the blockout
   (`generateKontextImage`, `kontextRenderPrompt`), then `verifyRenderLayout`
   (vision check vs the `layout` text) with ONE corrective retry → returns
-  `{ image, verified? }`. Kontext failure falls back to nano-banana
+  `{ image, verified?, problems? }`. Kontext failure falls back to nano-banana
   image-to-image from the blockout; no blockout → **text-to-image**.
 - `"auto"` → write (from the crop) then the same render path in one call.
 

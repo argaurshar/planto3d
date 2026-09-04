@@ -3,11 +3,10 @@
 // an image-to-image control: it fixes the CAMERA VIEWPOINT and the wall / window /
 // door / furniture POSITIONS so the photoreal render can't rearrange the layout.
 //
-// It is a SEMANTIC MASSING MAP, not a moody render: flat, high-contrast colours
-// per furniture category (a hand-built segmentation map) so each item reads as a
-// solid coloured region and the renderer can map colour -> furniture type (the
-// colour legend is in lib/prompts.ts `roomRenderPrompt`). `three` is imported
-// dynamically so it is code-split out of the main/SSR bundle — browser only.
+// It is a matte CLAY MASSING MODEL: lit surfaces in muted real-material tones
+// (see COLORS / CATEGORY_COLOR below for why not a neon legend). `three` is
+// imported dynamically so it is code-split out of the main/SSR bundle — browser
+// only.
 
 import {
   boxCenter,
@@ -241,6 +240,10 @@ export async function buildBlockoutDataUrl(
       if (isOpeningLabel(b.label)) {
         const c = boxCenter(b);
         const wall = nearestWall(c.cx, c.cy);
+        // An opening on the wall the camera stands outside of is behind the
+        // viewer. Its wall is culled, but the panel used to be drawn anyway —
+        // a 2m door slab 1.8m in front of the lens, eating a third of the frame.
+        if (wall === spot.wall) continue;
         const isDoor = isDoorLabel(b.label);
         // Doors are clay; a window should read as a bright light source.
         const mat = isDoor ? clay(COLORS.door) : flat(COLORS.window);
