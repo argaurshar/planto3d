@@ -91,8 +91,7 @@ export function promptWriterSystem(
     layoutHint,
     "Write ONE single-paragraph, richly detailed prompt for a photorealistic",
     "architectural INTERIOR render of that room, captured from a natural EYE-LEVEL",
-    "perspective, as if standing near the room's doorway/entry looking into the",
-    "space.",
+    "perspective looking across the space from one wall.",
     "Reconstruct the room precisely from the crop: state the room type, then",
     "describe the EXACT spatial arrangement — every major furniture piece and",
     "fixture and WHERE it sits relative to the walls (e.g. 'two beds side by side",
@@ -102,6 +101,8 @@ export function promptWriterSystem(
     "lighting and mood.",
     `Use this style throughout: ${style}. Lighting: ${brief.lighting}.`,
     "Do NOT add, remove, move or invent any walls, windows, doors or furniture.",
+    "Do NOT describe the camera, the entrance or a doorway — the image-to-image",
+    "renderer takes any mention of a door as a cue to paint one on a visible wall.",
     "End the paragraph with: \"The composition preserves the exact proportions",
     "and spatial arrangement of the room without adding any extra elements.\"",
     "Output ONLY the prompt text — no preamble, no headings, no quotes, no lists.",
@@ -195,9 +196,11 @@ export function kontextRenderPrompt(
   corrections?: string[],
 ): string {
   const style = resolveStyleDescriptor(brief);
+  // The retry renders from the same massing again, so the verifier's findings
+  // are framed as mistakes to avoid, not as edits to a previous picture.
   const fix =
     corrections && corrections.length
-      ? `IMPORTANT — a previous attempt got these wrong, fix exactly these and change nothing else: ${corrections.join("; ")}. `
+      ? `IMPORTANT — a previous attempt wrongly showed: ${corrections.join("; ")}. The input image is correct; do not repeat those mistakes. `
       : "";
   // Phrased as an EDIT INSTRUCTION, not a scene description: with a start image
   // that is what Kontext responds to. Materials and photographic language carry
@@ -209,7 +212,9 @@ export function kontextRenderPrompt(
     "camera, room proportions, walls, window and door openings, and the exact",
     "position, footprint and height of every outlined block. Do not add, remove,",
     "move, resize or rotate anything, and do not add windows, doors or furniture",
-    "that are not in the input.",
+    "that are not in the input. A wall with no panel or block against it in the",
+    "input stays BARE: no door, window, wardrobe, dresser, shelving, radiator or",
+    "artwork may appear on it.",
     "The block tones only say what each object IS (oat = bed, sage = seating,",
     "dark wood = wardrobe/storage, oak = table/desk/nightstand, pale blue =",
     "bathroom fixture, tan = rug, grey = other furniture; bright panel = window,",
@@ -241,10 +246,14 @@ export function layoutVerifierSystem(): string {
     "piece, which wall the window(s) are on, and where the door is. Judge only",
     "coarse geometry (counts + which wall/zone), not style or materials.",
     "Anything the layout marks as 'behind the viewer (not visible)' is outside",
-    "the frame by design: never report it as missing.",
+    "the frame by design: never report it as missing. Do report anything the",
+    "photo shows that the layout does not list (an extra door, window or piece",
+    "of furniture).",
     'Respond with ONLY this JSON, no prose: {"matches": true|false,',
-    '"problems": ["short description of each mismatch"]} — at most 4 problems,',
-    "each under 15 words. If the photo matches, problems must be [].",
+    '"problems": ["what the photo wrongly shows"]} — at most 4 problems, each',
+    "under 15 words, phrased as what is wrong IN THE PHOTO (e.g. 'a door on the",
+    "left wall (the layout has none there)', 'bed against the right wall instead",
+    "of the back wall'). If the photo matches, problems must be [].",
   ].join(" ");
 }
 
