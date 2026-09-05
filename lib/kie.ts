@@ -22,6 +22,12 @@ const MODEL = process.env.KIE_IMAGE_MODEL || "nano-banana-2";
 const RESOLUTION = process.env.KIE_IMAGE_RESOLUTION || "1K";
 // Structure-preserving edit model used for the blockout → photoreal render.
 const KONTEXT_MODEL = process.env.KIE_KONTEXT_MODEL || "flux-kontext-max";
+// Multi-reference model for the "reference" render engine (clay + depth map in).
+const REFERENCE_MODEL = process.env.KIE_REFERENCE_MODEL || "nano-banana-pro";
+const REFERENCE_RESOLUTION = process.env.KIE_REFERENCE_RESOLUTION || "2K";
+// Classic image-to-image (with a denoise strength) for the "structure" engine.
+const STRUCTURE_MODEL = process.env.KIE_STRUCTURE_MODEL || "qwen/image-to-image";
+const STRUCTURE_GUIDANCE = Number(process.env.KIE_STRUCTURE_GUIDANCE || 3);
 
 const UPLOAD_URL = "https://kieai.redpandaai.co/api/file-base64-upload";
 const CREATE_TASK_URL = "https://api.kie.ai/api/v1/jobs/createTask";
@@ -128,27 +134,26 @@ export async function uploadBase64(
   return url;
 }
 
-/** Create a generation task and return its taskId. */
-export async function createTask(
-  prompt: string,
-  imageUrls: string[],
-): Promise<string> {
+/** Create a nano-banana generation task and return its taskId. */
+export async function createTask(prompt: string, imageUrls: string[]): Promise<string> {
+  return createJob(MODEL, {
+    prompt,
+    image_input: imageUrls,
+    aspect_ratio: "auto",
+    resolution: RESOLUTION,
+    output_format: "png",
+  });
+}
+
+/** Create a task for any kie.ai job-API model with a raw `input` object. */
+export async function createJob(model: string, input: Record<string, unknown>): Promise<string> {
   const key = getApiKey();
   let res: Response;
   try {
     res = await fetch(CREATE_TASK_URL, {
       method: "POST",
       headers: authHeaders(key),
-      body: JSON.stringify({
-        model: MODEL,
-        input: {
-          prompt,
-          image_input: imageUrls,
-          aspect_ratio: "auto",
-          resolution: RESOLUTION,
-          output_format: "png",
-        },
-      }),
+      body: JSON.stringify({ model, input }),
     });
   } catch (err) {
     throw new KieError(
@@ -293,6 +298,72 @@ export async function generateImage(
     timeoutMs: Math.max(1000, budget - (Date.now() - started)),
     intervalMs: opts.intervalMs,
   });
+  return { imageUrl };
+}
+
+/** createJob + pollTask under one budget, for the engine-specific generators. */
+async function runJob(
+  model: string,
+  input: Record<string, unknown>,
+  opts: PollOptions,
+  started: number,
+): Promise<string> {
+  const budget = opts.timeoutMs ?? POLL_TIMEOUT_MS;
+  const taskId = await createJob(model, input);
+  return pollTask(taskId, {
+    timeoutMs: Math.max(1000, budget - (Date.now() - started)),
+    intervalMs: opts.intervalMs,
+  });
+}
+
+/**
+ * "Reference" engine: Nano Banana Pro with several reference images (the clay
+ * massing and its depth map), asked for the photograph they stand for.
+ */
+export async function generateReferenceImage(
+  prompt: string,
+  inputs: string[],
+  opts: PollOptions = {},
+): Promise<{ imageUrl: string }> {
+  const started = Date.now();
+  const image_input = await Promise.all(inputs.map((i, n) => toHostedUrl(i, `${n}-ref.png`)));
+  const imageUrl = await runJob(
+    REFERENCE_MODEL,
+    { prompt, image_input, aspect_ratio: "4:3", resolution: REFERENCE_RESOLUTION, output_format: "png" },
+    opts,
+    started,
+  );
+  return { imageUrl };
+}
+
+/**
+ * "Structure" engine: classic image-to-image at a fixed denoise `strength`,
+ * which keeps the init image's layout by construction.
+ */
+export async function generateStructureImage(
+  prompt: string,
+  input: string,
+  strength: number,
+  negativePrompt: string,
+  opts: PollOptions = {},
+): Promise<{ imageUrl: string }> {
+  const started = Date.now();
+  const image_url = await toHostedUrl(input, "structure.png");
+  const imageUrl = await runJob(
+    STRUCTURE_MODEL,
+    {
+      prompt,
+      image_url,
+      strength,
+      negative_prompt: negativePrompt,
+      guidance_scale: STRUCTURE_GUIDANCE,
+      num_inference_steps: 30,
+      output_format: "png",
+      enable_safety_checker: false,
+    },
+    opts,
+    started,
+  );
   return { imageUrl };
 }
 

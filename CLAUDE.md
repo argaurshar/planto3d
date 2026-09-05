@@ -13,9 +13,11 @@ Guidance for AI assistants (and humans) working in the **planto3d** repository.
 user is in the loop at every step: upload a plan, generate an overview, proceed,
 pick a room by drawing a box, and regenerate any 3D result they don't like.
 
-All image generation is done by **Nano Banana 2** — the `nano-banana-2` model on
-**[kie.ai](https://kie.ai)**, called via kie.ai's asynchronous job API. There is
-**no procedural geometry**; the 3D views are AI-generated images.
+All image generation runs on **[kie.ai](https://kie.ai)** models (the user
+brings only a kie.ai key): Nano Banana 2 for the overview, and a selectable
+**render engine** (Nano Banana Pro / Qwen image-to-image / FLUX Kontext) for
+the room photo. The only geometry we build ourselves is the per-room clay
+massing + depth map that locks the render's layout.
 
 ## Interaction flow
 
@@ -91,23 +93,37 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
      The result page shows the whole **evidence chain** — crop + boxes → clay
      massing → render — so a wrong render can be traced to its stage: massing
      ≠ plan means detection is at fault, render ≠ massing means the renderer.
-   - **3b — render** — when a blockout is present, `action:"render"` renders via
-     **FLUX.1 Kontext** (`flux-kontext-max`, kie.ai's structure-preserving edit
-     API): the clay massing is the input image, so the composition is enforced by
-     the model's own design rather than soft instruction → a photorealistic
-     **eye-level interior** (`components/RoomResult.tsx`). `kontextRenderPrompt`
-     is written as an **edit instruction** ("rephotograph this room…"), which is
-     what Kontext responds to with a start image, and spends its budget on
-     materials and photographic language (lens, daylight, PBR materials, "a
-     photograph, NOT a 3D render") since the geometry already lives in the image.
-     Kontext exposes no output-resolution parameter, so realism has to come from
-     the input image and the wording. The prompt forbids adding, removing or
-     moving anything, says a wall with no block against it stays **bare** (an
-     empty wall used to get a door and a dresser painted on it), and frames
-     the writer's interior prompt as styling only ("wherever it disagrees with
-     the image about what is where, the image wins"). The writer is told not
-     to mention the camera, entrance or doorway — Kontext takes any "door" in
-     the text as a cue to paint one.
+   - **3b — render** — when a blockout is present, `action:"render"` turns it
+     into the photo with the **render engine** chosen in `RoomSetup`
+     (`lib/renderEngine.ts`, one transport-agnostic dispatcher used by the
+     server route and the static build; each build supplies the three kie.ai
+     calls). The massing also comes with a **depth map** of the same view
+     (`buildBlockoutMaps`, a second draw with a linear-depth shader). Engines:
+     - **reference** (default) — `nano-banana-pro` with the clay AND the depth
+       map as reference images, asked for "the photograph this massing stands
+       for" (`referenceRenderPrompt`), 2K output. Gemini image models follow
+       multi-image structure instructions far better than an edit model.
+     - **structure** — `qwen/image-to-image`, classic image-to-image with a
+       denoise `strength`: at strength s only the last s of the diffusion is
+       re-run, so the massing's layout survives **by construction**. Two
+       passes: lock (0.62 from the clay) then refine (0.38 from pass 1), with
+       a negative prompt against extra doors/windows/furniture
+       (`structureRenderPrompt`, `STRUCTURE_NEGATIVE_PROMPT`).
+     - **edit** — `flux-kontext-max`, the previous default: an edit model
+       "rephotographs" the massing (`kontextRenderPrompt`). It re-imagined
+       layouts under a strong prompt and furnished empty walls, which is why it
+       is no longer the default. kie.ai has no depth/canny ControlNet endpoint,
+       so the reference and structure engines are the closest available to
+       pixel-aligned conditioning.
+     All engine prompts share the block legend, forbid adding, removing or
+     moving anything, say a wall with no block against it stays **bare** (an
+     empty wall used to get a door and a dresser painted on it), and frame the
+     writer's interior prompt as styling only ("wherever it disagrees with the
+     image about what is where, the image wins"). The writer is told not to
+     mention the camera, entrance or doorway — image models take any "door" in
+     the text as a cue to paint one. Overrides: `KIE_REFERENCE_MODEL`,
+     `KIE_REFERENCE_RESOLUTION`, `KIE_STRUCTURE_MODEL`, `KIE_STRUCTURE_GUIDANCE`
+     (and `NEXT_PUBLIC_` twins for the static build).
    - **3c — verify & retry** — the finished render is checked by the vision LLM
      against the detected layout (counts + which wall for each item, window/door
      placement). On mismatch it re-renders ONCE with the verifier's corrections,
@@ -154,8 +170,10 @@ falls back to **text-to-image** when no blockout is available.
     edit model** used for the layout-locked room render: the blockout image
     fixes the composition, the prompt says what to turn each block into.
   - **`nano-banana-2`** image model via the **job API** (`lib/kie.ts`) — the
-    overview render + the room-render fallback when Kontext/blockout is
+    overview render + the room-render fallback when the engine/blockout is
     unavailable.
+  - **`nano-banana-pro`** (reference engine) and **`qwen/image-to-image`**
+    (structure engine), both via the same job API (`createJob` + `pollTask`).
   - a **vision chat model** (`gemini-3-flash`) via the **OpenAI-compatible
     chat endpoint** for the prompt-writer and the post-render **layout
     verifier** (`lib/kieChat.ts`).
@@ -206,13 +224,14 @@ drops straight into `<img src>`.
   (`ROUTE_BUDGET_MS`); `renderLocked` skips the fallback/corrective retry when
   under `MIN_RENDER_MS` remains so an already-billed image is returned instead
   of lost to a platform kill.
-- `"render"` → with a `blockout` (colour-coded eye-level massing PNG) it runs
-  `renderLocked`: **FLUX.1 Kontext** edit from the blockout
-  (`generateKontextImage`, `kontextRenderPrompt`), then `verifyRenderLayout`
+- `"render"` → with a `blockout` (eye-level massing PNG, plus optional `depth`
+  map and `engine`) it runs `renderLocked`: the chosen engine
+  (`renderWithEngine`) turns the massing into a photo, then `verifyRenderLayout`
   (vision check vs the `layout` text) with ONE corrective retry → returns
-  `{ image, verification?: { matches, problems } }`. The blockout is hosted
-  once and its URL reused by every generation in the request. Kontext failure falls back to nano-banana
-  image-to-image from the blockout; no blockout → **text-to-image**.
+  `{ image, verification?: { matches, problems } }`. The massing and depth map
+  are hosted once and their URLs reused by every generation in the request.
+  Engine failure falls back to nano-banana image-to-image from the massing; no
+  blockout → **text-to-image**.
 - `"auto"` → write (from the crop) then the same render path in one call.
 
 The optional `reference` (the overview URL) is accepted by `write`/`auto` and
@@ -255,6 +274,7 @@ lib/
   kiePoll.ts            # shared poll policy for both clients: 5-min window, transient
                         #   "generate task timeout" grace (120s), timeout messages
   verifyLoop.ts         # render → verify → one corrective retry (shared by route + static)
+  renderEngine.ts       # reference / structure / edit engine dispatch (shared by route + static)
   blockout.ts           # eye-level 3D blockout (Three.js) from boxes → render lock
   prompts.ts            # overview + prompt-writer system + room render templates
   styles.ts             # interior-design style presets + brief resolution

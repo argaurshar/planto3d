@@ -141,6 +141,26 @@ export async function buildBlockoutDataUrl(
   cropAspect: number,
   opts: BlockoutOptions = {},
 ): Promise<string | null> {
+  return (await buildBlockoutMaps(boxes, cropAspect, opts))?.clay ?? null;
+}
+
+export interface BlockoutMaps {
+  /** The clay massing (outlined blocks, cast shadows) — what the UI shows and the verifier sees. */
+  clay: string;
+  /** Linear depth of the same view (white = near, black = far) for the reference engine. */
+  depth: string;
+}
+
+/**
+ * Same scene, two passes: the clay massing and a depth map from the identical
+ * camera. The depth map is the pixel-aligned structural signal an image model
+ * can't misread — the geometry is already ours, so it costs one extra draw.
+ */
+export async function buildBlockoutMaps(
+  boxes: SpatialBox[],
+  cropAspect: number,
+  opts: BlockoutOptions = {},
+): Promise<BlockoutMaps | null> {
   if (!boxes.length || typeof document === "undefined") return null;
 
   const width = opts.width ?? 768;
@@ -326,7 +346,27 @@ export async function buildBlockoutDataUrl(
     camera.lookAt(target[0], target[1], target[2]);
 
     renderer.render(scene, camera);
-    const url = canvas.toDataURL("image/png");
+    const clayUrl = canvas.toDataURL("image/png");
+
+    // Depth pass: linear view-space depth over the room's own range, so a
+    // 4m room uses the full grey ramp instead of the last 2% of a
+    // perspective z-buffer.
+    const farDist = Math.hypot(shellW, shellD, WALL_H) + VIEW_OUT;
+    const depthMat = new THREE.ShaderMaterial({
+      side: THREE.DoubleSide, // the shell planes face whichever way; never cull one
+      uniforms: { near: { value: 0.3 }, far: { value: farDist } },
+      vertexShader:
+        "varying float vZ; void main(){ vec4 mv = modelViewMatrix * vec4(position, 1.0); vZ = -mv.z; gl_Position = projectionMatrix * mv; }",
+      fragmentShader:
+        "uniform float near; uniform float far; varying float vZ; void main(){ float d = clamp((vZ - near) / (far - near), 0.0, 1.0); gl_FragColor = vec4(vec3(1.0 - d), 1.0); }",
+    });
+    scene.overrideMaterial = depthMat;
+    renderer.shadowMap.enabled = false;
+    renderer.setClearColor(0x000000, 1);
+    renderer.render(scene, camera);
+    const depth = canvas.toDataURL("image/png");
+    scene.overrideMaterial = null;
+    depthMat.dispose();
 
     // Free GPU resources.
     scene.traverse((o) => {
@@ -338,7 +378,7 @@ export async function buildBlockoutDataUrl(
       }
     });
     renderer.dispose();
-    return url;
+    return { clay: clayUrl, depth };
   } catch (e) {
     if (typeof console !== "undefined") console.debug("[voxa] blockout: render failed", e);
     try {

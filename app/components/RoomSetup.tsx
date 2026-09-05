@@ -1,14 +1,16 @@
 "use client";
 
-import { ROOM_TYPES, type RoomType } from "@/lib/types";
+import { RENDER_ENGINES, ROOM_TYPES, type RenderEngine, type RoomType } from "@/lib/types";
 import { STYLE_PRESETS } from "@/lib/styles";
 
 interface Props {
   cropDataUrl: string | null;
   roomType: RoomType;
   styleId: string;
+  engine: RenderEngine;
   onRoomTypeChange: (value: RoomType) => void;
   onStyleChange: (value: string) => void;
+  onEngineChange: (value: RenderEngine) => void;
   onGenerate: () => void;
   onBack: () => void;
 }
@@ -22,8 +24,10 @@ export default function RoomSetup({
   cropDataUrl,
   roomType,
   styleId,
+  engine,
   onRoomTypeChange,
   onStyleChange,
+  onEngineChange,
   onGenerate,
   onBack,
 }: Props) {
@@ -76,6 +80,25 @@ export default function RoomSetup({
                 Custom uses the style text from your design brief above.
               </p>
             )}
+          </div>
+
+          <div className="space-y-2">
+            <span className="eyebrow">Render engine</span>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {RENDER_ENGINES.map((e) => (
+                <button
+                  key={e.value}
+                  type="button"
+                  onClick={() => onEngineChange(e.value)}
+                  className={`chip ${engine === e.value ? "chip-active" : ""}`}
+                >
+                  {e.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-neutral-500">
+              {RENDER_ENGINES.find((e) => e.value === engine)?.blurb}
+            </p>
           </div>
         </div>
       </div>
