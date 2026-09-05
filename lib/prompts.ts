@@ -234,6 +234,85 @@ export function kontextRenderPrompt(
     .join(" ");
 }
 
+const BLOCK_LEGEND =
+  "The block tones only say what each object IS (oat = bed, sage = seating, dark wood = wardrobe/storage, oak = table/desk/nightstand, pale blue = bathroom fixture, tan = rug, grey = other furniture; bright panel = window, wood panel = door).";
+
+const BARE_WALL_RULE =
+  "Nothing may be added, removed, moved, resized or rotated. A wall with no panel or block against it in the massing stays BARE: no door, window, wardrobe, dresser, shelving, radiator or artwork may appear on it.";
+
+const PHOTO_LANGUAGE =
+  "Interior architectural photograph, 24mm lens, natural daylight with soft directional shadows, physically based materials with visible wood grain and fabric weave, true-to-life colour, sharp focus. It must look like a photograph, NOT a 3D render, CGI or video-game image.";
+
+function mistakesToAvoid(corrections?: string[]): string {
+  return corrections && corrections.length
+    ? `IMPORTANT — a previous attempt wrongly showed: ${corrections.join("; ")}. The massing is correct; do not repeat those mistakes. `
+    : "";
+}
+
+/**
+ * Reference engine (Nano Banana Pro, multi-image): image 1 is the clay
+ * massing, image 2 (when present) the depth map of the same view. The model is
+ * asked for the photograph that massing stands for, not for an edit of it.
+ */
+export function referenceRenderPrompt(
+  interiorPrompt: string,
+  brief: DesignBrief,
+  hasDepth: boolean,
+  corrections?: string[],
+): string {
+  const style = resolveStyleDescriptor(brief);
+  return [
+    mistakesToAvoid(corrections),
+    "Image 1 is a clay massing model of one room photographed at eye level, with every block outlined.",
+    hasDepth ? "Image 2 is the depth map of exactly the same view (white = near, black = far)." : "",
+    "Produce the real photograph that this massing stands for: the SAME camera and framing, the same room proportions, walls, ceiling, window and door openings, and every outlined block replaced IN PLACE by a real, fully detailed piece of that type at the same footprint and height.",
+    BLOCK_LEGEND,
+    BARE_WALL_RULE,
+    "Use the following only for materials, colours and styling; wherever it disagrees with image 1 about what is where, image 1 wins:",
+    capAtSentence(interiorPrompt, 600),
+    `Materials and style: ${style}. Lighting: ${brief.lighting}.`,
+    PHOTO_LANGUAGE,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/** What the structure engine must never re-introduce. */
+export const STRUCTURE_NEGATIVE_PROMPT =
+  "extra door, extra window, added furniture, different layout, moved furniture, cartoon, illustration, 3d render, cgi, clay, blocky, untextured, low detail, blurry, text, watermark, people";
+
+/**
+ * Structure engine (Qwen image-to-image). Pass 1 runs from the massing at a
+ * strength that keeps the layout; it must describe the finished photo, not an
+ * edit. Pass 2 runs from pass 1's photo at a lower strength for materials.
+ */
+export function structureRenderPrompt(
+  interiorPrompt: string,
+  brief: DesignBrief,
+  pass: 1 | 2,
+  corrections?: string[],
+): string {
+  const style = resolveStyleDescriptor(brief);
+  if (pass === 1) {
+    return [
+      mistakesToAvoid(corrections),
+      "Photorealistic interior photograph of exactly this room: the same camera, walls, ceiling, window and door openings, and every block is the real piece of furniture it stands for, at the same place and size.",
+      BLOCK_LEGEND,
+      BARE_WALL_RULE,
+      `Materials and style: ${style}. Lighting: ${brief.lighting}.`,
+      PHOTO_LANGUAGE,
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+  return [
+    "Refine this photograph. Keep everything exactly where it is — same camera, walls, openings and furniture — and make every surface real: bedding, upholstery, wood grain, hardware, skirting, soft daylight.",
+    capAtSentence(interiorPrompt, 400),
+    `Materials and style: ${style}. Lighting: ${brief.lighting}.`,
+    PHOTO_LANGUAGE,
+  ].join(" ");
+}
+
 /**
  * Vision-LLM system prompt that checks a finished render against the detected
  * layout. Must answer with strict JSON so the caller can act on it.

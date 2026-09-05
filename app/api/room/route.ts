@@ -1,17 +1,27 @@
 import { NextResponse } from "next/server";
 
-import { generateImage, generateKontextImage, KieError, toHostedUrl } from "@/lib/kie";
+import {
+  generateImage,
+  generateKontextImage,
+  generateReferenceImage,
+  generateStructureImage,
+  KieError,
+  toHostedUrl,
+} from "@/lib/kie";
 import { writeRoomPrompt, verifyRenderLayout } from "@/lib/kieChat";
 import { dataUrlToInline } from "@/lib/image";
-import { roomRenderPrompt, kontextRenderPrompt, fallbackRoomPrompt } from "@/lib/prompts";
+import { roomRenderPrompt, fallbackRoomPrompt } from "@/lib/prompts";
+import { renderWithEngine, type EngineTransport } from "@/lib/renderEngine";
 import { isAllowedReference } from "@/lib/refs";
 import { DEFAULT_BRIEF } from "@/lib/styles";
 import { renderWithVerification } from "@/lib/verifyLoop";
-import type {
-  DesignBrief,
-  GenerateImageResponse,
-  RoomPromptResponse,
-  RoomType,
+import {
+  RENDER_ENGINES,
+  type DesignBrief,
+  type GenerateImageResponse,
+  type RenderEngine,
+  type RoomPromptResponse,
+  type RoomType,
 } from "@/lib/types";
 
 // Kontext render + verify + one corrective retry can chain two generations.
@@ -42,6 +52,10 @@ interface Body {
   reference?: string;
   /** Eye-level 3D blockout (base64 data URL) used as image-to-image control. */
   blockout?: string;
+  /** Depth map of the same view (base64 data URL), for the reference engine. */
+  depth?: string;
+  /** Which model turns the blockout into the photo (default: reference). */
+  engine?: RenderEngine;
   /** Detected-layout description used to verify the render (plain text). */
   layout?: string;
 }
@@ -51,29 +65,38 @@ function err(message: string, status: number) {
 }
 
 /**
- * Layout-locked render: FLUX.1 Kontext (structure-preserving edit) from the
- * blockout, then a vision-verify pass with one corrective retry
+ * Layout-locked render: the chosen engine (`lib/renderEngine.ts`) turns the
+ * blockout into a photo, then a vision-verify pass with one corrective retry
  * (`renderWithVerification`, shared with the static build). Falls back to
- * nano-banana image-to-image if Kontext is unavailable.
+ * nano-banana image-to-image if the engine is unavailable.
  */
 async function renderLocked(
   interior: string,
   variation: number,
   brief: DesignBrief,
   blockout: string,
+  depth: string | undefined,
+  engine: RenderEngine,
   layout: string | undefined,
   deadline: number,
 ): Promise<Omit<GenerateImageResponse, "mimeType">> {
   const remaining = () => Math.max(0, deadline - Date.now());
-  // Host the blockout ONCE; every generation below reuses the URL instead of
-  // re-uploading the multi-MB data URL (and paying for it out of the budget).
-  const hosted = await toHostedUrl(blockout, "blockout.png");
-  const kontext = async (corrections?: string[]) =>
-    (
-      await generateKontextImage(kontextRenderPrompt(interior, brief, corrections), hosted, "blockout.png", {
-        timeoutMs: remaining(),
-      })
-    ).imageUrl;
+  // Host the inputs ONCE; every generation below reuses the URLs instead of
+  // re-uploading the multi-MB data URLs (and paying for it out of the budget).
+  const [clayUrl, depthUrl] = await Promise.all([
+    toHostedUrl(blockout, "blockout.png"),
+    depth ? toHostedUrl(depth, "depth.png") : Promise.resolve(undefined),
+  ]);
+  const transport: EngineTransport = {
+    reference: async (prompt, inputs) =>
+      (await generateReferenceImage(prompt, inputs, { timeoutMs: remaining() })).imageUrl,
+    structure: async (prompt, input, strength, negative) =>
+      (await generateStructureImage(prompt, input, strength, negative, { timeoutMs: remaining() })).imageUrl,
+    edit: async (prompt, input) =>
+      (await generateKontextImage(prompt, input, "blockout.png", { timeoutMs: remaining() })).imageUrl,
+  };
+  const run = (corrections?: string[]) =>
+    renderWithEngine(engine, transport, { interior, brief, clayUrl, depthUrl, corrections });
 
   return renderWithVerification({
     layout,
@@ -81,16 +104,16 @@ async function renderLocked(
     canRetry: () => remaining() >= MIN_RENDER_MS,
     verify: verifyRenderLayout,
     render: async (corrections) => {
-      if (corrections) return kontext(corrections);
+      if (corrections) return run(corrections);
       try {
-        return await kontext();
+        return await run();
       } catch (e) {
-        // Kontext unavailable → previous behavior (nano-banana img2img), but
-        // only when enough budget remains to actually finish it.
+        // Engine unavailable → nano-banana img2img from the massing, but only
+        // when enough budget remains to actually finish it.
         if (remaining() < MIN_RENDER_MS) throw e;
         const { imageUrl } = await generateImage(
           roomRenderPrompt(interior, variation, brief, true),
-          [hosted],
+          [clayUrl],
           "room.png",
           { timeoutMs: remaining() },
         );
@@ -127,6 +150,13 @@ export async function POST(req: Request) {
       blockout = body.blockout;
     }
   }
+  let depth: string | undefined;
+  if (typeof body.depth === "string" && body.depth) {
+    if (body.depth.length <= MAX_DATA_URL_CHARS && dataUrlToInline(body.depth)) depth = body.depth;
+  }
+  const engine: RenderEngine = RENDER_ENGINES.some((e) => e.value === body.engine)
+    ? (body.engine as RenderEngine)
+    : "reference";
   // Optional expected-layout text for the post-render verification pass.
   const layout =
     typeof body.layout === "string" && body.layout.trim()
@@ -176,7 +206,7 @@ export async function POST(req: Request) {
     if (action === "render") {
       const interior = (body.prompt ?? "").trim() || fallbackRoomPrompt(brief, roomType);
       if (blockout) {
-        const result = await renderLocked(interior, variation, brief, blockout, layout, deadline);
+        const result = await renderLocked(interior, variation, brief, blockout, depth, engine, layout, deadline);
         const payload: GenerateImageResponse = { ...result, mimeType: "image/png" };
         return NextResponse.json(payload);
       }
@@ -207,7 +237,7 @@ export async function POST(req: Request) {
       interior = fallbackRoomPrompt(brief, roomType);
     }
     if (blockout) {
-      const result = await renderLocked(interior, variation, brief, blockout, layout, deadline);
+      const result = await renderLocked(interior, variation, brief, blockout, depth, engine, layout, deadline);
       const payload: GenerateImageResponse & RoomPromptResponse = {
         ...result,
         mimeType: "image/png",

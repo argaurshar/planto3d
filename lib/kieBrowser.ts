@@ -51,6 +51,15 @@ function detectModel(): string {
 function kontextModel(): string {
   return process.env.NEXT_PUBLIC_KIE_KONTEXT_MODEL || "flux-kontext-max";
 }
+function referenceModel(): string {
+  return process.env.NEXT_PUBLIC_KIE_REFERENCE_MODEL || "nano-banana-pro";
+}
+function referenceResolution(): string {
+  return process.env.NEXT_PUBLIC_KIE_REFERENCE_RESOLUTION || "2K";
+}
+function structureModel(): string {
+  return process.env.NEXT_PUBLIC_KIE_STRUCTURE_MODEL || "qwen/image-to-image";
+}
 
 const KONTEXT_GENERATE_URL = "https://api.kie.ai/api/v1/flux/kontext/generate";
 const KONTEXT_RECORD_URL = "https://api.kie.ai/api/v1/flux/kontext/record-info";
@@ -86,19 +95,19 @@ async function uploadBase64(dataUrl: string, apiKey: string, fileName: string): 
 }
 
 async function createTask(prompt: string, imageUrls: string[], apiKey: string): Promise<string> {
+  return createJob(
+    imageModel(),
+    { prompt, image_input: imageUrls, aspect_ratio: "auto", resolution: imageResolution(), output_format: "png" },
+    apiKey,
+  );
+}
+
+/** Create a task for any kie.ai job-API model with a raw `input` object. */
+async function createJob(model: string, input: Record<string, unknown>, apiKey: string): Promise<string> {
   const res = await fetch(CREATE_TASK_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: imageModel(),
-      input: {
-        prompt,
-        image_input: imageUrls,
-        aspect_ratio: "auto",
-        resolution: imageResolution(),
-        output_format: "png",
-      },
-    }),
+    body: JSON.stringify({ model, input }),
   });
   const json = (await res.json().catch(() => null)) as
     | { code?: number; msg?: string; data?: { taskId?: string } }
@@ -161,6 +170,47 @@ export async function generateImageBrowser(
     inputs.map((i, idx) => toHostedUrl(i, apiKey, inputs.length > 1 ? `${idx}-${fileName}` : fileName)),
   );
   const taskId = await createTask(prompt, urls, apiKey);
+  return pollTask(taskId, apiKey);
+}
+
+/** "Reference" engine: Nano Banana Pro with the clay massing + depth map as references. */
+export async function generateReferenceImageBrowser(
+  prompt: string,
+  inputs: string[],
+  apiKey: string,
+): Promise<string> {
+  const image_input = await Promise.all(inputs.map((i, n) => toHostedUrl(i, apiKey, `${n}-ref.png`)));
+  const taskId = await createJob(
+    referenceModel(),
+    { prompt, image_input, aspect_ratio: "4:3", resolution: referenceResolution(), output_format: "png" },
+    apiKey,
+  );
+  return pollTask(taskId, apiKey);
+}
+
+/** "Structure" engine: classic image-to-image at a fixed denoise strength. */
+export async function generateStructureImageBrowser(
+  prompt: string,
+  input: string,
+  strength: number,
+  negativePrompt: string,
+  apiKey: string,
+): Promise<string> {
+  const image_url = await toHostedUrl(input, apiKey, "structure.png");
+  const taskId = await createJob(
+    structureModel(),
+    {
+      prompt,
+      image_url,
+      strength,
+      negative_prompt: negativePrompt,
+      guidance_scale: 3,
+      num_inference_steps: 30,
+      output_format: "png",
+      enable_safety_checker: false,
+    },
+    apiKey,
+  );
   return pollTask(taskId, apiKey);
 }
 

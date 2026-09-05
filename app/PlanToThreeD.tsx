@@ -9,11 +9,11 @@ import RoomSetup from "./components/RoomSetup";
 import RoomPrompt from "./components/RoomPrompt";
 import RoomResult from "./components/RoomResult";
 import { requestOverview, requestRoomPrompt, requestRoomRender } from "@/lib/api";
-import { buildBlockoutDataUrl } from "@/lib/blockout";
+import { buildBlockoutMaps } from "@/lib/blockout";
 import { summarizeLabels, describeLayout, type SpatialBox } from "@/lib/spatial";
 import { cropToDataUrl, type Rect } from "@/lib/crop";
 import { DEFAULT_BRIEF } from "@/lib/styles";
-import type { DesignBrief, LayoutVerification, RoomType } from "@/lib/types";
+import type { DesignBrief, LayoutVerification, RenderEngine, RoomType } from "@/lib/types";
 
 type Step = "upload" | "overview" | "select" | "roomSetup" | "roomPrompt" | "room";
 type Stage = "idle" | "writing" | "rendering";
@@ -30,6 +30,8 @@ export type LayoutLock = {
 export type RoomVersion = {
   url: string;
   verification?: LayoutVerification;
+  /** Which engine produced it. */
+  engine?: RenderEngine;
 };
 
 interface State {
@@ -42,6 +44,10 @@ interface State {
   cropAspect: number;
   /** Eye-level 3D blockout of the room (PNG data URL) used to lock the render. */
   blockoutDataUrl: string | null;
+  /** Depth map of the same view, fed to the reference engine alongside the clay. */
+  depthDataUrl: string | null;
+  /** Which kie.ai model turns the blockout into the photo. Kept across rooms. */
+  renderEngine: RenderEngine;
   /** Status of the layout lock (detected object count + why it's on/off). */
   layoutLock: LayoutLock;
   /** Detected-layout description used to verify renders (from describeLayout). */
@@ -73,9 +79,18 @@ type Action =
   | { type: "GO_OVERVIEW" }
   | { type: "SET_ROOM_TYPE"; value: RoomType }
   | { type: "SET_ROOM_STYLE"; styleId: string }
+  | { type: "SET_ENGINE"; engine: RenderEngine }
   | { type: "BEGIN_SETUP"; dataUrl: string; aspect: number }
   | { type: "START_WRITE" }
-  | { type: "PROMPT_DONE"; prompt: string; blockout: string | null; lock: LayoutLock; layout: string; boxes: SpatialBox[] }
+  | {
+      type: "PROMPT_DONE";
+      prompt: string;
+      blockout: string | null;
+      depth: string | null;
+      lock: LayoutLock;
+      layout: string;
+      boxes: SpatialBox[];
+    }
   | { type: "REWRITE" }
   | { type: "EDIT_PROMPT"; value: string }
   | { type: "RENDER_START" }
@@ -94,6 +109,7 @@ type Action =
  */
 const FRESH_ROOM = {
   blockoutDataUrl: null,
+  depthDataUrl: null,
   layoutLock: { status: "none", count: 0, summary: "" },
   layoutText: "",
   boxes: [],
@@ -113,6 +129,7 @@ const initialState: State = {
   ...FRESH_ROOM,
   roomType: "auto",
   roomStyleId: DEFAULT_BRIEF.styleId,
+  renderEngine: "reference",
   loading: false,
   stage: "idle",
   error: null,
@@ -141,6 +158,8 @@ function reducer(state: State, action: Action): State {
       return { ...state, roomType: action.value };
     case "SET_ROOM_STYLE":
       return { ...state, roomStyleId: action.styleId };
+    case "SET_ENGINE":
+      return { ...state, renderEngine: action.engine };
     case "BEGIN_SETUP":
       return {
         ...state,
@@ -160,6 +179,7 @@ function reducer(state: State, action: Action): State {
         stage: "idle",
         roomPrompt: action.prompt,
         blockoutDataUrl: action.blockout,
+        depthDataUrl: action.depth,
         layoutLock: action.lock,
         layoutText: action.layout,
         boxes: action.boxes,
@@ -255,8 +275,11 @@ export default function PlanToThreeD() {
       if (isStale(id)) return;
       // Best-effort: a null blockout (no boxes / no WebGL) falls back to text-to-image.
       let blockout: string | null = null;
+      let depth: string | null = null;
       try {
-        blockout = await buildBlockoutDataUrl(boxes, state.cropAspect, { roomSize });
+        const maps = await buildBlockoutMaps(boxes, state.cropAspect, { roomSize });
+        blockout = maps?.clay ?? null;
+        depth = maps?.depth ?? null;
       } catch {
         blockout = null;
       }
@@ -269,7 +292,7 @@ export default function PlanToThreeD() {
       if (typeof console !== "undefined") {
         console.debug("[voxa] layout lock:", lock.status, "boxes:", boxes.length, "blockout:", Boolean(blockout));
       }
-      dispatch({ type: "PROMPT_DONE", prompt, blockout, lock, layout: describeLayout(boxes), boxes });
+      dispatch({ type: "PROMPT_DONE", prompt, blockout, depth, lock, layout: describeLayout(boxes), boxes });
     } catch (err) {
       if (isStale(id)) return;
       // Leave the box editable so the user can still write a prompt by hand.
@@ -277,6 +300,7 @@ export default function PlanToThreeD() {
         type: "PROMPT_DONE",
         prompt: "",
         blockout: null,
+        depth: null,
         lock: { status: "none", count: 0, summary: "" },
         layout: "",
         boxes: [],
@@ -332,9 +356,10 @@ export default function PlanToThreeD() {
         effectiveBrief(),
         state.blockoutDataUrl ?? undefined,
         state.layoutText || undefined,
+        { engine: state.renderEngine, depthDataUrl: state.depthDataUrl ?? undefined },
       );
       if (isStale(id)) return;
-      dispatch({ type: "ROOM_DONE", version: { url: image, verification } });
+      dispatch({ type: "ROOM_DONE", version: { url: image, verification, engine: state.renderEngine } });
     } catch (err) {
       if (isStale(id)) return;
       dispatch({ type: "ERROR", message: message(err) });
@@ -403,8 +428,10 @@ export default function PlanToThreeD() {
           cropDataUrl={state.cropDataUrl}
           roomType={state.roomType}
           styleId={state.roomStyleId}
+          engine={state.renderEngine}
           onRoomTypeChange={(value) => dispatch({ type: "SET_ROOM_TYPE", value })}
           onStyleChange={(styleId) => dispatch({ type: "SET_ROOM_STYLE", styleId })}
+          onEngineChange={(engine) => dispatch({ type: "SET_ENGINE", engine })}
           onGenerate={confirmSetup}
           onBack={pickAnother}
         />

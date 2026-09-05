@@ -1,9 +1,12 @@
-import type { DesignBrief, GenerateImageResponse, RoomPromptResponse, RoomType } from "./types";
+import type { DesignBrief, GenerateImageResponse, RenderEngine, RoomPromptResponse, RoomType } from "./types";
 import type { SpatialBox, RoomSize } from "./spatial";
-import { overviewPrompt, kontextRenderPrompt } from "./prompts";
+import { overviewPrompt } from "./prompts";
+import { renderWithEngine, type EngineTransport } from "./renderEngine";
 import {
   generateImageBrowser,
   generateKontextImageBrowser,
+  generateReferenceImageBrowser,
+  generateStructureImageBrowser,
   toHostedUrl as toHostedUrlBrowser,
   verifyRenderLayoutBrowser,
   writeRoomPromptBrowser,
@@ -116,12 +119,20 @@ export type RoomRenderResult = Omit<GenerateImageResponse, "mimeType">;
  * check compares the result against `layoutText` and retries once with
  * corrections if it drifted. Without a blockout it falls back to TEXT-TO-IMAGE.
  */
+export interface RoomRenderOptions {
+  /** Which model turns the blockout into the photo (default: reference). */
+  engine?: RenderEngine;
+  /** Depth map of the blockout view, for the reference engine. */
+  depthDataUrl?: string;
+}
+
 export async function requestRoomRender(
   prompt: string,
   variation: number,
   brief: DesignBrief,
   blockoutDataUrl?: string,
   layoutText?: string,
+  { engine = "reference", depthDataUrl }: RoomRenderOptions = {},
 ): Promise<RoomRenderResult> {
   const hasBlockout = Boolean(blockoutDataUrl);
   if (IS_STATIC) {
@@ -136,20 +147,29 @@ export async function requestRoomRender(
       return { image };
     }
     // Same render → verify → retry loop as the server route (lib/verifyLoop.ts).
-    // The blockout is uploaded once and its URL reused by every generation.
-    const hosted = await toHostedUrlBrowser(blockoutDataUrl!, key, "blockout.png");
+    // The inputs are uploaded once and their URLs reused by every generation.
+    const [clayUrl, depthUrl] = await Promise.all([
+      toHostedUrlBrowser(blockoutDataUrl!, key, "blockout.png"),
+      depthDataUrl ? toHostedUrlBrowser(depthDataUrl, key, "depth.png") : Promise.resolve(undefined),
+    ]);
+    const transport: EngineTransport = {
+      reference: (p, inputs) => generateReferenceImageBrowser(p, inputs, key),
+      structure: (p, input, strength, negative) =>
+        generateStructureImageBrowser(p, input, strength, negative, key),
+      edit: (p, input) => generateKontextImageBrowser(p, input, key),
+    };
+    const run = (corrections?: string[]) =>
+      renderWithEngine(engine, transport, { interior: prompt, brief, clayUrl, depthUrl, corrections });
     return renderWithVerification({
       layout: layoutText,
       verify: (url, layout) => verifyRenderLayoutBrowser(url, layout, key),
       render: async (corrections) => {
-        if (corrections) {
-          return generateKontextImageBrowser(kontextRenderPrompt(prompt, brief, corrections), hosted, key);
-        }
+        if (corrections) return run(corrections);
         try {
-          return await generateKontextImageBrowser(kontextRenderPrompt(prompt, brief), hosted, key);
+          return await run();
         } catch {
-          // Kontext unavailable → previous behavior (nano-banana img2img).
-          return generateImageBrowser(roomRenderPrompt(prompt, variation, brief, true), [hosted], key, "room.png");
+          // Engine unavailable → nano-banana img2img from the massing.
+          return generateImageBrowser(roomRenderPrompt(prompt, variation, brief, true), [clayUrl], key, "room.png");
         }
       },
     });
@@ -160,6 +180,8 @@ export async function requestRoomRender(
     variation,
     brief,
     blockout: blockoutDataUrl,
+    depth: depthDataUrl,
+    engine,
     layout: layoutText,
   });
   return { image: data.image, verification: data.verification };

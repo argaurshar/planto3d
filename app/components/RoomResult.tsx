@@ -4,6 +4,7 @@ import DownloadButton from "./DownloadButton";
 import DetectionOverlay from "./DetectionOverlay";
 import type { LayoutLock, RoomVersion } from "../PlanToThreeD";
 import type { SpatialBox } from "@/lib/spatial";
+import { RENDER_ENGINES } from "@/lib/types";
 
 interface Props {
   cropDataUrl: string | null;
@@ -44,6 +45,7 @@ export default function RoomResult({
   const hasMultiple = versions.length > 1;
   // The check belongs to the version being VIEWED, not the latest render.
   const verification = current?.verification ?? null;
+  const engineLabel = RENDER_ENGINES.find((e) => e.value === current?.engine)?.label;
   const problemText = verification && !verification.matches ? verification.problems.join("; ") : "";
 
   return (
@@ -109,6 +111,7 @@ export default function RoomResult({
               {versions.length > 0 && (
                 <span className="text-xs text-neutral-400">
                   version {currentIndex + 1} / {versions.length}
+                  {engineLabel && <span className="text-neutral-500"> · {engineLabel}</span>}
                 </span>
               )}
               {current && (

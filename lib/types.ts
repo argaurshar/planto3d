@@ -31,6 +31,29 @@ export const ROOM_TYPES: { value: RoomType; label: string }[] = [
   { value: "hallway", label: "Hallway" },
 ];
 
+/** Which kie.ai model turns the clay massing into the photograph (see lib/renderEngine.ts). */
+export type RenderEngine = "reference" | "structure" | "edit";
+
+export const RENDER_ENGINES: { value: RenderEngine; label: string; blurb: string }[] = [
+  {
+    value: "reference",
+    label: "Reference · Nano Banana Pro",
+    blurb:
+      "Gemini 3 Pro Image is shown the clay massing and its depth map and told to photograph exactly that scene. Strongest realism, 2K output.",
+  },
+  {
+    value: "structure",
+    label: "Structure-locked · Qwen",
+    blurb:
+      "Classic image-to-image at a fixed denoise strength: the massing's layout survives by construction. Two passes — lock, then refine.",
+  },
+  {
+    value: "edit",
+    label: "Edit · FLUX Kontext",
+    blurb: "A structure-preserving edit model rephotographs the massing. The previous default.",
+  },
+];
+
 /**
  * The "design brief" — global parameters captured once and threaded into every
  * prompt (overview + per-room).
