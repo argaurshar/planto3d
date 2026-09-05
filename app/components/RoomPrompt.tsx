@@ -1,9 +1,13 @@
 "use client";
 
+import DetectionOverlay from "./DetectionOverlay";
 import type { LayoutLock } from "../PlanToThreeD";
+import type { SpatialBox } from "@/lib/spatial";
 
 interface Props {
   cropDataUrl: string | null;
+  /** Detected boxes, drawn over the crop. */
+  boxes: SpatialBox[];
   /** Eye-level 3D blockout (PNG data URL) that locks the render's layout. */
   blockoutDataUrl: string | null;
   /** Whether the render is geometry-locked to the blockout, and why not if not. */
@@ -25,6 +29,7 @@ interface Props {
  */
 export default function RoomPrompt({
   cropDataUrl,
+  boxes,
   blockoutDataUrl,
   layoutLock,
   prompt,
@@ -42,16 +47,17 @@ export default function RoomPrompt({
     <div className="card space-y-4 p-4">
       <div className="grid gap-6 md:grid-cols-[1fr_2fr]">
         <figure className="space-y-2">
-          <figcaption className="eyebrow">Selected room</figcaption>
+          <figcaption className="eyebrow">Selected room {boxes.length > 0 && "· what was detected"}</figcaption>
           {cropDataUrl && (
             <div className="media-frame bg-white">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={cropDataUrl}
-                alt="Selected room crop from the plan"
-                className="block w-full"
-              />
+              <DetectionOverlay cropDataUrl={cropDataUrl} boxes={boxes} />
             </div>
+          )}
+          {boxes.length > 0 && (
+            <p className="text-xs text-neutral-500">
+              Amber = furniture, blue = window/door, green = where the camera stands. If a box is
+              wrong here, the render will be wrong too — redraw the room more tightly or Rewrite.
+            </p>
           )}
           {!writing && (
             <div className="space-y-1">

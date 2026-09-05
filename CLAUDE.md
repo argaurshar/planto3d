@@ -85,7 +85,12 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
      / `parseRoomDimensions`, axes auto-corrected against the crop aspect), else
      from the crop aspect at an assumed size. Three.js is
      dynamically imported (browser-only; code-split out of SSR). A small preview
-     ("Layout lock") is shown in `components/RoomPrompt.tsx`.
+     ("Layout lock") is shown in `components/RoomPrompt.tsx`, and the detected
+     boxes are drawn over the plan crop with a marker for where the camera
+     stands (`components/DetectionOverlay.tsx`; the `boxes` live in state).
+     The result page shows the whole **evidence chain** — crop + boxes → clay
+     massing → render — so a wrong render can be traced to its stage: massing
+     ≠ plan means detection is at fault, render ≠ massing means the renderer.
    - **3b — render** — when a blockout is present, `action:"render"` renders via
      **FLUX.1 Kontext** (`flux-kontext-max`, kie.ai's structure-preserving edit
      API): the clay massing is the input image, so the composition is enforced by
@@ -229,8 +234,9 @@ app/
     DownloadButton.tsx  # blob-fetch download for remote images
     RoomSelector.tsx    # box drawing over the plan
     RoomSetup.tsx       # per-room interior type + style table
+    DetectionOverlay.tsx # plan crop with the detected boxes + camera marker drawn over it
     RoomPrompt.tsx      # editable auto-written interior prompt + Render
-    RoomResult.tsx      # interior render + Regenerate/Edit prompt + download + history
+    RoomResult.tsx      # evidence chain (crop+boxes → clay massing → render) + Regenerate/history
   api/
     overview/route.ts   # POST { plan, brief }                  → { image, mimeType }
     room/route.ts        # POST { action, room, brief, prompt… } → { image|prompt }
