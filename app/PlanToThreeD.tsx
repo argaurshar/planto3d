@@ -10,7 +10,7 @@ import RoomPrompt from "./components/RoomPrompt";
 import RoomResult from "./components/RoomResult";
 import { requestOverview, requestRoomPrompt, requestRoomRender } from "@/lib/api";
 import { buildBlockoutDataUrl } from "@/lib/blockout";
-import { summarizeLabels, describeLayout } from "@/lib/spatial";
+import { summarizeLabels, describeLayout, type SpatialBox } from "@/lib/spatial";
 import { cropToDataUrl, type Rect } from "@/lib/crop";
 import { DEFAULT_BRIEF } from "@/lib/styles";
 import type { DesignBrief, LayoutVerification, RoomType } from "@/lib/types";
@@ -46,6 +46,8 @@ interface State {
   layoutLock: LayoutLock;
   /** Detected-layout description used to verify renders (from describeLayout). */
   layoutText: string;
+  /** The detected boxes themselves, drawn over the crop so the lock is inspectable. */
+  boxes: SpatialBox[];
   roomType: RoomType;
   /** Per-room style override (defaults to the brief's style). */
   roomStyleId: string;
@@ -73,7 +75,7 @@ type Action =
   | { type: "SET_ROOM_STYLE"; styleId: string }
   | { type: "BEGIN_SETUP"; dataUrl: string; aspect: number }
   | { type: "START_WRITE" }
-  | { type: "PROMPT_DONE"; prompt: string; blockout: string | null; lock: LayoutLock; layout: string }
+  | { type: "PROMPT_DONE"; prompt: string; blockout: string | null; lock: LayoutLock; layout: string; boxes: SpatialBox[] }
   | { type: "REWRITE" }
   | { type: "EDIT_PROMPT"; value: string }
   | { type: "RENDER_START" }
@@ -94,6 +96,7 @@ const FRESH_ROOM = {
   blockoutDataUrl: null,
   layoutLock: { status: "none", count: 0, summary: "" },
   layoutText: "",
+  boxes: [],
   roomPrompt: "",
   roomVersions: [],
   currentVersion: 0,
@@ -159,6 +162,7 @@ function reducer(state: State, action: Action): State {
         blockoutDataUrl: action.blockout,
         layoutLock: action.lock,
         layoutText: action.layout,
+        boxes: action.boxes,
       };
     case "REWRITE":
       return { ...state, stage: "writing", error: null };
@@ -265,7 +269,7 @@ export default function PlanToThreeD() {
       if (typeof console !== "undefined") {
         console.debug("[voxa] layout lock:", lock.status, "boxes:", boxes.length, "blockout:", Boolean(blockout));
       }
-      dispatch({ type: "PROMPT_DONE", prompt, blockout, lock, layout: describeLayout(boxes) });
+      dispatch({ type: "PROMPT_DONE", prompt, blockout, lock, layout: describeLayout(boxes), boxes });
     } catch (err) {
       if (isStale(id)) return;
       // Leave the box editable so the user can still write a prompt by hand.
@@ -275,6 +279,7 @@ export default function PlanToThreeD() {
         blockout: null,
         lock: { status: "none", count: 0, summary: "" },
         layout: "",
+        boxes: [],
       });
       dispatch({ type: "ERROR", message: message(err) });
     }
@@ -408,6 +413,7 @@ export default function PlanToThreeD() {
       {state.step === "roomPrompt" && (
         <RoomPrompt
           cropDataUrl={state.cropDataUrl}
+          boxes={state.boxes}
           blockoutDataUrl={state.blockoutDataUrl}
           layoutLock={state.layoutLock}
           prompt={state.roomPrompt}
@@ -423,6 +429,8 @@ export default function PlanToThreeD() {
       {state.step === "room" && (
         <RoomResult
           cropDataUrl={state.cropDataUrl}
+          boxes={state.boxes}
+          blockoutDataUrl={state.blockoutDataUrl}
           layoutLock={state.layoutLock}
           versions={state.roomVersions}
           currentIndex={state.currentVersion}

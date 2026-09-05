@@ -1,10 +1,16 @@
 "use client";
 
 import DownloadButton from "./DownloadButton";
+import DetectionOverlay from "./DetectionOverlay";
 import type { LayoutLock, RoomVersion } from "../PlanToThreeD";
+import type { SpatialBox } from "@/lib/spatial";
 
 interface Props {
   cropDataUrl: string | null;
+  /** Detected boxes, drawn over the crop so a wrong render can be traced to its stage. */
+  boxes: SpatialBox[];
+  /** The clay massing the render was locked to. */
+  blockoutDataUrl: string | null;
   layoutLock: LayoutLock;
   /** Every render of this room; each carries its own layout check. */
   versions: RoomVersion[];
@@ -21,6 +27,8 @@ interface Props {
 /** Step 5/6: show the room render, regenerate, and flip through versions. */
 export default function RoomResult({
   cropDataUrl,
+  boxes,
+  blockoutDataUrl,
   layoutLock,
   versions,
   currentIndex,
@@ -41,20 +49,38 @@ export default function RoomResult({
   return (
     <div className="card space-y-5 p-4">
       <div className="grid gap-6 md:grid-cols-[1fr_2fr]">
-        <figure className="space-y-2">
-          <figcaption className="eyebrow">Selected room</figcaption>
-          {cropDataUrl ? (
-            <div className="media-frame bg-white">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={cropDataUrl} alt="Selected room crop from the plan" className="block w-full" />
+        <figure className="space-y-3">
+          <div className="space-y-2">
+            <figcaption className="eyebrow">1 · Plan crop {boxes.length > 0 && "+ detected layout"}</figcaption>
+            {cropDataUrl ? (
+              <div className="media-frame bg-white">
+                <DetectionOverlay cropDataUrl={cropDataUrl} boxes={boxes} />
+              </div>
+            ) : null}
+          </div>
+          {blockoutDataUrl && (
+            <div className="space-y-2">
+              <figcaption className="eyebrow">2 · Clay massing the render is locked to</figcaption>
+              <div className="media-frame bg-white">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={blockoutDataUrl}
+                  alt="Eye-level clay massing model built from the detected layout"
+                  className="block w-full"
+                />
+              </div>
+              <p className="text-xs text-neutral-500">
+                Compare top to bottom: if the massing already differs from the plan, the fault is
+                detection; if the render differs from the massing, it is the renderer.
+              </p>
             </div>
-          ) : null}
+          )}
         </figure>
 
         <figure className="space-y-2">
           <figcaption className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="eyebrow">Photorealistic interior</span>
+              <span className="eyebrow">3 · Photorealistic interior</span>
               {current &&
                 (layoutLock.status === "locked" ? (
                   <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-300">

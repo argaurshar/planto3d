@@ -43,22 +43,30 @@ const VIEW_OUT = 1.8;
 // to still identify the object type. Colour carry-over is now harmless — the
 // blockout already looks like a sane room.
 const COLORS = {
-  floor: 0xbdb5a8, // light greige stone
+  floor: 0xa8a094, // mid warm grey stone — every piece must read against it
   wall: 0xeceae5, // soft warm white
   window: 0xdaeefc, // daylight (kept bright; it should read as light)
   door: 0x8a6a4a, // mid wood
   ceiling: 0xf3f1ed, // slightly brighter than the walls
+  edge: 0x3a332c, // outline drawn round every block
 } as const;
 
-/** Muted material tone per furniture category — the blockout's legend. */
+/**
+ * Material tone per furniture category — the blockout's legend. Real-material
+ * hues (so colour carry-over into the render is harmless) but every one is
+ * a MID tone, clearly darker than the walls and distinct from the floor: the
+ * first clay palette used a linen-cream bed and a sand rug that all but
+ * vanished against the off-white walls and greige floor, and with no
+ * structure left to preserve Kontext re-imagined the whole layout.
+ */
 const CATEGORY_COLOR: Record<FurnitureCategory, number> = {
-  bed: 0xe8dfd0, // linen cream
-  seating: 0x8e9c8f, // sage upholstery
-  storage: 0x7c6046, // dark walnut
-  table: 0xb08a5e, // light wood
-  bath: 0xcfdde1, // porcelain blue-grey
-  rug: 0xbfae8f, // sand
-  other: 0xa39d95, // warm grey
+  bed: 0xc8b48e, // oat linen
+  seating: 0x6e7f70, // deep sage upholstery
+  storage: 0x5e4632, // dark walnut
+  table: 0xa6784a, // mid oak
+  bath: 0xb9ccd3, // porcelain blue-grey
+  rug: 0x9d8760, // tan
+  other: 0x857c72, // warm mid grey
 };
 
 export interface BlockoutOptions {
@@ -180,11 +188,38 @@ export async function buildBlockoutDataUrl(
     const flat = (color: number) => new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide });
     // The ground half must stay light: the ceiling's normal faces down, so a dark
     // ground colour painted it a dim blue-grey instead of a bright ceiling.
-    scene.add(new THREE.HemisphereLight(0xffffff, 0xd7d2ca, 2.0));
-    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-    const sun = new THREE.DirectionalLight(0xfff4e6, 1.5);
-    sun.position.set(roomW * 0.8, 3.2, roomD * 0.15);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0xd7d2ca, 1.1));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+    // The sun casts real shadows: contact shadows are what separate a block
+    // from the floor for the edit model, so it keeps the object where it is
+    // instead of dissolving it into the surface.
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    const sun = new THREE.DirectionalLight(0xfff4e6, 2.6);
+    sun.position.set(roomW * 0.9, 3.6, roomD * 0.1);
+    sun.target.position.set(roomW / 2, 0, roomD / 2);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.bias = -0.0006;
+    const reach = Math.max(roomW, roomD) + VIEW_OUT + 1;
+    sun.shadow.camera.left = -reach;
+    sun.shadow.camera.right = reach;
+    sun.shadow.camera.top = reach;
+    sun.shadow.camera.bottom = -reach;
+    sun.shadow.camera.near = 0.1;
+    sun.shadow.camera.far = reach * 3;
     scene.add(sun);
+    scene.add(sun.target);
+    // Every block gets a dark outline. Colour alone proved too weak a
+    // structural signal; explicit edges are what Kontext preserves most
+    // faithfully, whatever the tones become.
+    const edgeMat = new THREE.LineBasicMaterial({ color: COLORS.edge });
+    const outline = (mesh: import("three").Mesh) => {
+      const lines = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry), edgeMat);
+      lines.position.copy(mesh.position);
+      lines.rotation.copy(mesh.rotation);
+      scene.add(lines);
+    };
 
     // 0-1000 (top = far, i.e. Z=0) → metres.
     const toX = (v: number) => (v / 1000) * roomW;
@@ -210,6 +245,7 @@ export async function buildBlockoutDataUrl(
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(shellW, shellD), clay(COLORS.floor));
     floor.rotation.x = -Math.PI / 2;
     floor.position.set(midX, 0, midZ);
+    floor.receiveShadow = true;
     scene.add(floor);
     const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(shellW, shellD), clay(COLORS.ceiling));
     ceiling.rotation.x = Math.PI / 2;
@@ -223,6 +259,7 @@ export async function buildBlockoutDataUrl(
       const m = new THREE.Mesh(new THREE.PlaneGeometry(w, WALL_H), wallMat);
       m.position.set(x, WALL_H / 2, z);
       m.rotation.y = rotY;
+      m.receiveShadow = true;
       scene.add(m);
     };
     if (spot.wall !== "far") addWall(shellW, midX, 0, 0);
@@ -264,6 +301,7 @@ export async function buildBlockoutDataUrl(
           panel.rotation.y = Math.PI / 2;
         }
         scene.add(panel);
+        outline(panel);
         continue;
       }
 
@@ -273,7 +311,10 @@ export async function buildBlockoutDataUrl(
         clay(CATEGORY_COLOR[furnitureCategory(b.label)]),
       );
       mesh.position.set(cx, h / 2, cz);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
       scene.add(mesh);
+      outline(mesh);
     }
 
     // Eye-level camera standing at the doorway looking into the room, so every

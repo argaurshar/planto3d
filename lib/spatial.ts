@@ -260,7 +260,10 @@ export function furnitureHeight(label: string): number {
   if (/\b(desk|table|dining table|dresser|vanity|sink|basin|counter|kitchen)\b/.test(l)) return 0.78;
   if (/\b(sofa|couch|armchair|chair|toilet|bathtub|bath|stool|bench)\b/.test(l)) return 0.85;
   if (/\b(bed|mattress)\b/.test(l)) return 0.55;
-  if (/\b(nightstand|bedside|side table|coffee table|rug|carpet|ottoman)\b/.test(l)) return 0.5;
+  if (/\b(nightstand|bedside|side table|coffee table|ottoman)\b/.test(l)) return 0.5;
+  // Floor coverings are flat. A 0.5m prior turned every rug into a half-metre
+  // block that the renderer then "furnished" as a bench or an ottoman.
+  if (/\b(rug|carpet|mat)\b/.test(l)) return 0.02;
   return 0.8;
 }
 
@@ -326,10 +329,14 @@ export interface CameraSpot {
 
 const CAMERA_INSET = 90; // ≈0.35m from the wall as a fraction of a typical room
 const CAMERA_MARGIN = 40; // keep this far from any furniture box
+// Only something at least this tall (metres) can block the lens: the camera
+// stands at eye level, so it looks straight over a rug, a bench or a low table.
+// (A rug by the door used to reject the door wall and flip the whole view.)
+const BLOCKING_HEIGHT = 1.0;
 
 function insideFurniture(boxes: SpatialBox[], x: number, y: number): boolean {
   return boxes.some((b) => {
-    if (isOpeningLabel(b.label)) return false;
+    if (isOpeningLabel(b.label) || furnitureHeight(b.label) < BLOCKING_HEIGHT) return false;
     const [ymin, xmin, ymax, xmax] = b.box_2d;
     return (
       x >= xmin - CAMERA_MARGIN &&
