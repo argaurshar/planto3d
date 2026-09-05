@@ -102,9 +102,12 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
      photograph, NOT a 3D render") since the geometry already lives in the image.
      Kontext exposes no output-resolution parameter, so realism has to come from
      the input image and the wording. The prompt forbids adding, removing or
-     moving anything and frames the writer's interior prompt as styling only
-     ("wherever it disagrees with the image about what is where, the image
-     wins").
+     moving anything, says a wall with no block against it stays **bare** (an
+     empty wall used to get a door and a dresser painted on it), and frames
+     the writer's interior prompt as styling only ("wherever it disagrees with
+     the image about what is where, the image wins"). The writer is told not
+     to mention the camera, entrance or doorway — Kontext takes any "door" in
+     the text as a cue to paint one.
    - **3c — verify & retry** — the finished render is checked by the vision LLM
      against the detected layout (counts + which wall for each item, window/door
      placement). On mismatch it re-renders ONCE with the verifier's corrections,
@@ -117,7 +120,11 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
      the first pass's problems if the re-check itself is unavailable. The
      verifier is told that openings marked "behind the viewer (not visible)"
      are outside the frame by design (`isBehindViewer` in `lib/spatial.ts` is
-     the one predicate the blockout cull and the layout text share). Each
+     the one predicate the blockout cull and the layout text share), to report
+     anything extra the photo shows, and to phrase each problem as what the
+     photo wrongly shows; the retry prompt frames those as mistakes not to
+     repeat (it renders from the same massing again, so "move X" would be
+     meaningless). Each
      version in `roomVersions[]` carries its own `verification`, so browsing
      history shows the badge that belongs to that image. Fallbacks:
      Kontext unavailable → nano-banana image-to-image from the blockout; no

@@ -367,18 +367,33 @@ export function cameraSpot(boxes: SpatialBox[]): CameraSpot {
   // keeping some offset preserves the sense of entering from the door side.
   const clamp = (v: number) => Math.min(700, Math.max(300, 500 + (v - 500) * 0.45));
 
-  // 1. A door, preferring a plain entrance over balcony/closet doors.
   const doors = boxes.filter((b) => isDoorLabel(b.label));
   const door = doors.find((b) => !isSecondaryDoor(b.label)) ?? doors[0];
-  if (door) {
-    const { cx, cy } = boxCenter(door);
-    const wall = nearestWall(cx, cy);
-    const along = clamp(wall === "far" || wall === "near" ? cx : cy);
-    const p = spotPoint(wall, along);
-    if (!insideFurniture(boxes, p.x, p.y)) return { wall, along, atDoor: true };
+  const doorWall = door ? nearestWall(boxCenter(door).cx, boxCenter(door).cy) : null;
+
+  // 1. The plan's bottom edge, so the render keeps the plan's orientation:
+  // plan-left is render-left and the top of the plan is the back wall. The
+  // old "stand in the doorway" rule put the camera on whichever wall held the
+  // door — with a door at the top of the plan the whole view came out
+  // mirrored, which reads as "the layout changed" when compared to the plan,
+  // and the door itself was behind the lens, so the render could never show
+  // it. From the bottom edge a door on any other wall is IN frame and gets
+  // verified like everything else.
+  {
+    const along = door && doorWall === "near" ? clamp(boxCenter(door).cx) : 500;
+    const p = spotPoint("near", along);
+    if (!insideFurniture(boxes, p.x, p.y)) return { wall: "near", along, atDoor: doorWall === "near" };
   }
 
-  // 2. Emptiest wall first, then the others, skipping spots inside furniture.
+  // 2. Blocked there → the door wall.
+  if (door && doorWall && doorWall !== "near") {
+    const { cx, cy } = boxCenter(door);
+    const along = clamp(doorWall === "far" ? cx : cy);
+    const p = spotPoint(doorWall, along);
+    if (!insideFurniture(boxes, p.x, p.y)) return { wall: doorWall, along, atDoor: true };
+  }
+
+  // 3. Emptiest wall first, then the others, skipping spots inside furniture.
   const counts: Record<Wall, number> = { far: 0, near: 0, left: 0, right: 0 };
   for (const b of boxes) {
     const { cx, cy } = boxCenter(b);
@@ -478,7 +493,7 @@ export function describeLayout(boxes: SpatialBox[]): string {
   }
 
   const parts: string[] = [
-    `Viewpoint: eye-level, standing ${spot.atDoor ? "in the doorway" : "at the middle"} of one wall looking across the room. "Back" is the wall facing the viewer, "front" is nearest the viewer, "left"/"right" are the viewer's left and right; the wall behind the viewer is not visible.`,
+    `Viewpoint: eye-level, standing at one wall looking across the room. "Back" is the wall facing the viewer, "front" is nearest the viewer, "left"/"right" are the viewer's left and right; the wall behind the viewer is not visible.`,
   ];
   if (furniture.length) parts.push(`Furniture (positions relative to the viewer): ${furniture.join(", ")}.`);
   if (openings.length) parts.push(`Openings: ${openings.join(", ")}.`);
