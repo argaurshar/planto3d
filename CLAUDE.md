@@ -60,10 +60,19 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
      ControlNet/structural conditioning, which nano-banana / Gemini image models
      don't expose).
    - **3a.5 — layout lock (blockout)** — from the detected boxes, the client
-     builds an eye-level **matte clay massing model** of the room with Three.js
-     (`lib/blockout.ts`): floor, ceiling and walls, a massing box per furniture
-     item (height by label prior; rugs/carpets are flat), and panels marking
-     windows/doors on the nearest wall. Lambert materials plus a
+     builds an eye-level **clay model** of the room with Three.js
+     (`lib/blockout.ts` + `lib/proxies.ts`): floor, ceiling, **walls of real
+     thickness with the door and window openings cut in** (full-height pieces
+     between openings, lintels, sills, frames, a closed door leaf, glass with
+     a cross mullion, a window board, skirting), and a **proxy per furniture
+     item** built from its category and label — a bed is base + mattress +
+     headboard + pillows + a throw, a wardrobe has door panels and handles,
+     a bookshelf has shelves, a table or chair has legs, a sofa has a backrest,
+     arms and cushions, a bathtub has a rim, a toilet a tank, a sink a
+     pedestal; rugs are flat. Each proxy is turned so its back faces its
+     nearest wall (headboard, sofa back, wardrobe doors all read correctly).
+     Boxes were too ambiguous: a slab could be a bed, a bench or a plinth, and
+     the renderer guessed. Lambert materials plus a
      hemisphere/sun/ambient rig give it real shading, the sun casts **real
      shadows** and **every block is outlined** in a dark edge line: the
      structural signal Kontext preserves most faithfully is edges and contact
@@ -276,6 +285,7 @@ lib/
   verifyLoop.ts         # render → verify → one corrective retry (shared by route + static)
   renderEngine.ts       # reference / structure / edit engine dispatch (shared by route + static)
   blockout.ts           # eye-level 3D blockout (Three.js) from boxes → render lock
+  proxies.ts            # scene assembly: furniture proxies + walls with openings (Three.js)
   prompts.ts            # overview + prompt-writer system + room render templates
   styles.ts             # interior-design style presets + brief resolution
   kieBrowser.ts         # static build: browser-side kie.ai client (user key)

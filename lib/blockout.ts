@@ -23,6 +23,14 @@ import {
   type SpatialBox,
   type Wall,
 } from "./spatial";
+import {
+  buildFurniture,
+  buildWall,
+  facingRotation,
+  type ProxyMaterials,
+  type WallOpening,
+  type WallSpec,
+} from "./proxies";
 
 const WALL_H = 2.7; // ceiling height (m)
 const ROOM_MAX = 6; // longest floor dimension (m)
@@ -235,10 +243,14 @@ export async function buildBlockoutMaps(
     // faithfully, whatever the tones become.
     const edgeMat = new THREE.LineBasicMaterial({ color: COLORS.edge });
     const outline = (mesh: import("three").Mesh) => {
-      const lines = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry), edgeMat);
-      lines.position.copy(mesh.position);
-      lines.rotation.copy(mesh.rotation);
-      scene.add(lines);
+      // A child of the mesh, so it follows the proxy group's rotation/position.
+      mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry), edgeMat));
+    };
+    const outlineMarked = (root: import("three").Object3D) => {
+      root.traverse((o) => {
+        const m = o as import("three").Mesh;
+        if (m.isMesh && m.userData.outline) outline(m);
+      });
     };
 
     // 0-1000 (top = far, i.e. Z=0) → metres.
@@ -272,69 +284,71 @@ export async function buildBlockoutMaps(
     ceiling.position.set(midX, WALL_H, midZ);
     scene.add(ceiling);
 
-    // Every wall except the one the camera stands outside of — that one would
-    // sit between the eye and the room and block the whole view.
-    const wallMat = clay(COLORS.wall);
-    const addWall = (w: number, x: number, z: number, rotY: number) => {
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, WALL_H), wallMat);
-      m.position.set(x, WALL_H / 2, z);
-      m.rotation.y = rotY;
-      m.receiveShadow = true;
-      scene.add(m);
-    };
-    if (spot.wall !== "far") addWall(shellW, midX, 0, 0);
-    if (spot.wall !== "near") addWall(shellW, midX, roomD, 0);
-    if (spot.wall !== "left") addWall(shellD, 0, midZ, Math.PI / 2);
-    if (spot.wall !== "right") addWall(shellD, roomW, midZ, Math.PI / 2);
-
-    // Furniture + openings, colour-coded by category.
+    // Walls with real thickness and their openings cut in (lib/proxies.ts):
+    // full-height pieces between openings, lintels, sills, frames, a closed
+    // door leaf, glass with a mullion, skirting. Every wall except the one the
+    // camera stands outside of — that one would sit between the eye and the
+    // room and block the whole view — and, with it, any opening detected on it
+    // (a door panel 1.8m in front of the lens used to eat a third of the frame).
+    const openingsByWall: Record<Wall, WallOpening[]> = { far: [], near: [], left: [], right: [] };
     for (const b of boxes) {
+      if (!isOpeningLabel(b.label)) continue;
+      const c = boxCenter(b);
+      const wall = nearestWall(c.cx, c.cy);
+      const [ymin, xmin, ymax, xmax] = b.box_2d;
+      const alongX = wall === "far" || wall === "near";
+      const kind = isDoorLabel(b.label) ? "door" : "window";
+      let start = alongX ? toX(xmin) : toZ(ymin);
+      let end = alongX ? toX(xmax) : toZ(ymax);
+      const minW = kind === "door" ? 0.8 : 0.6;
+      if (end - start < minW) {
+        const m = (start + end) / 2;
+        start = m - minW / 2;
+        end = m + minW / 2;
+      }
+      openingsByWall[wall].push({ kind, start, end });
+    }
+    const mats: ProxyMaterials = { clay, flat };
+    const wallSpecs: WallSpec[] = [
+      { wall: "far", a0: xMin, a1: xMax, at: 0, outward: -1, openings: openingsByWall.far, wallH: WALL_H },
+      { wall: "near", a0: xMin, a1: xMax, at: roomD, outward: 1, openings: openingsByWall.near, wallH: WALL_H },
+      { wall: "left", a0: zMin, a1: zMax, at: 0, outward: -1, openings: openingsByWall.left, wallH: WALL_H },
+      { wall: "right", a0: zMin, a1: zMax, at: roomW, outward: 1, openings: openingsByWall.right, wallH: WALL_H },
+    ];
+    for (const spec of wallSpecs) {
+      if (isBehindViewer(spot, spec.wall)) continue;
+      const group = buildWall(THREE, mats, spec, COLORS.wall);
+      scene.add(group);
+      outlineMarked(group);
+    }
+
+    // Furniture proxies (bed with headboard and pillows, wardrobe with doors,
+    // table on legs, sofa with backrest…), each turned so its back faces its
+    // nearest wall.
+    for (const b of boxes) {
+      if (isOpeningLabel(b.label)) continue;
       const [ymin, xmin, ymax, xmax] = b.box_2d;
       const cx = toX((xmin + xmax) / 2);
       const cz = toZ((ymin + ymax) / 2);
       const bw = Math.max(0.2, toX(Math.abs(xmax - xmin)));
       const bd = Math.max(0.2, toZ(Math.abs(ymax - ymin)));
-
-      if (isOpeningLabel(b.label)) {
-        const c = boxCenter(b);
-        const wall = nearestWall(c.cx, c.cy);
-        // An opening on the wall the camera stands outside of is behind the
-        // viewer. Its wall is culled, but the panel used to be drawn anyway —
-        // a 2m door slab 1.8m in front of the lens, eating a third of the frame.
-        // (Same predicate the layout text uses to mark it "not visible".)
-        if (isBehindViewer(spot, wall)) continue;
-        const isDoor = isDoorLabel(b.label);
-        // Doors are clay; a window should read as a bright light source.
-        const mat = isDoor ? clay(COLORS.door) : flat(COLORS.window);
-        const h = isDoor ? 2.0 : 1.3;
-        const y = isDoor ? h / 2 : 1.2;
-        const span = wall === "far" || wall === "near" ? bw : bd;
-        const panel = new THREE.Mesh(new THREE.PlaneGeometry(Math.max(0.5, span), h), mat);
-        const eps = 0.03;
-        if (wall === "far") panel.position.set(cx, y, eps);
-        else if (wall === "near") panel.position.set(cx, y, roomD - eps);
-        else if (wall === "left") {
-          panel.position.set(eps, y, cz);
-          panel.rotation.y = Math.PI / 2;
-        } else {
-          panel.position.set(roomW - eps, y, cz);
-          panel.rotation.y = Math.PI / 2;
-        }
-        scene.add(panel);
-        outline(panel);
-        continue;
-      }
-
-      const h = furnitureHeight(b.label);
-      const mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(bw, h, bd),
-        clay(CATEGORY_COLOR[furnitureCategory(b.label)]),
+      const facing = nearestWall((xmin + xmax) / 2, (ymin + ymax) / 2);
+      const sideways = facing === "left" || facing === "right";
+      const category = furnitureCategory(b.label);
+      const proxy = buildFurniture(
+        THREE,
+        mats,
+        category,
+        b.label,
+        CATEGORY_COLOR[category],
+        sideways ? bd : bw,
+        furnitureHeight(b.label),
+        sideways ? bw : bd,
       );
-      mesh.position.set(cx, h / 2, cz);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      scene.add(mesh);
-      outline(mesh);
+      proxy.position.set(cx, 0, cz);
+      proxy.rotation.y = facingRotation(facing);
+      scene.add(proxy);
+      outlineMarked(proxy);
     }
 
     // Eye-level camera standing at the doorway looking into the room, so every
