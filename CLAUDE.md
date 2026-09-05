@@ -60,15 +60,20 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
    - **3a.5 — layout lock (blockout)** — from the detected boxes, the client
      builds an eye-level **matte clay massing model** of the room with Three.js
      (`lib/blockout.ts`): floor, ceiling and walls, a massing box per furniture
-     item (height by label prior), and panels marking windows/doors on the
-     nearest wall. Lambert materials plus a hemisphere/sun/ambient rig give it
-     real shading. **Its tones are muted real-material colours** (cream bed, sage
-     seating, walnut storage, light-wood tables, sand rug) rather than a
-     saturated segmentation palette: Kontext preserves colour as part of
-     structure, so the old blue/orange/purple legend came back out of the
-     renderer as a teal panel, an orange wardrobe and a purple bench. Colour
-     carry-over is now harmless because the massing already looks like a sane
-     room. The camera stands **outside** the wall carrying the detected door
+     item (height by label prior; rugs/carpets are flat), and panels marking
+     windows/doors on the nearest wall. Lambert materials plus a
+     hemisphere/sun/ambient rig give it real shading, the sun casts **real
+     shadows** and **every block is outlined** in a dark edge line: the
+     structural signal Kontext preserves most faithfully is edges and contact
+     shadows, not colour. **Its tones are mid real-material colours** (oat bed,
+     deep-sage seating, walnut storage, oak tables, tan rug on a mid-grey floor)
+     rather than a saturated segmentation palette: Kontext preserves colour as
+     part of structure, so the old blue/orange/purple legend came back out of
+     the renderer as a teal panel, an orange wardrobe and a purple bench. But
+     they must stay clearly darker than the walls and distinct from the floor —
+     a first clay palette with a linen-cream bed and a sand rug all but
+     vanished against the off-white shell, and with nothing left to preserve
+     Kontext re-imagined the whole layout. The camera stands **outside** the wall carrying the detected door
      (that wall is culled), and the floor, ceiling and flanking walls are
      stretched by the same offset so the frame stays bounded by real surfaces —
      standing inside a 3.4x3.0m bedroom put the eye on top of a wardrobe. The
@@ -91,7 +96,10 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
      materials and photographic language (lens, daylight, PBR materials, "a
      photograph, NOT a 3D render") since the geometry already lives in the image.
      Kontext exposes no output-resolution parameter, so realism has to come from
-     the input image and the wording.
+     the input image and the wording. The prompt forbids adding, removing or
+     moving anything and frames the writer's interior prompt as styling only
+     ("wherever it disagrees with the image about what is where, the image
+     wins").
    - **3c — verify & retry** — the finished render is checked by the vision LLM
      against the detected layout (counts + which wall for each item, window/door
      placement). On mismatch it re-renders ONCE with the verifier's corrections,
@@ -179,6 +187,8 @@ drops straight into `<img src>`.
   string is written **relative to the viewer** standing where the blockout
   camera stands (`cameraSpot` — one pure function shared by the blockout, the
   prompt writer and the verifier, so all three agree on which wall is "back").
+  Only furniture at least 1m tall can reject a camera spot; the eye looks
+  over rugs and low tables (a rug by the door used to flip the whole view).
   The `auto` action passes `needRoomSize: false` since it never returns it.
 - Every generation in a route draws from one budget derived from `maxDuration`
   (`ROUTE_BUDGET_MS`); `renderLocked` skips the fallback/corrective retry when
