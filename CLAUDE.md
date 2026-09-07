@@ -69,7 +69,9 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
      headboard + pillows + a throw, a wardrobe has door panels and handles,
      a bookshelf has shelves, a table or chair has legs, a sofa has a backrest,
      arms and cushions, a bathtub has a rim, a toilet a tank, a sink a
-     pedestal; rugs are flat. Each proxy is turned so its back faces its
+     pedestal; ottomans/poufs and round coffee/side tables are cylinders (a
+     "round" label or a square footprint), a plant is a pot with a leafy
+     canopy, a floor lamp a pole with a shade; rugs are flat. Each proxy is turned so its back faces its
      nearest wall (headboard, sofa back, wardrobe doors all read correctly).
      Boxes were too ambiguous: a slab could be a bed, a bench or a plinth, and
      the renderer guessed. Lambert materials plus a
@@ -112,6 +114,14 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
      ("Layout lock") is shown in `components/RoomPrompt.tsx`, and the detected
      boxes are drawn over the plan crop with a marker for where the camera
      stands (`components/DetectionOverlay.tsx`; the `boxes` live in state).
+     On the prompt step the boxes are **editable**: drag to move, corner
+     handles to resize, Delete to remove, relabel, or "+ Add box" and draw a
+     missing item. Every edit rebuilds the clay massing, depth map and layout
+     text client-side (`editBoxes` → `buildLayout`; `roomSize` is kept in
+     state so the rebuild stays at true scale) — no detection call, no cost.
+     Detection is good but not perfect (it invented a window and missed a
+     unit on one plan); fixing it here is the cheapest route to an exact
+     layout, and the render then inherits the correction.
      The result page shows the whole **evidence chain** — crop + boxes → clay
      massing → render — so a wrong render can be traced to its stage: massing
      ≠ plan means detection is at fault, render ≠ massing means the renderer.

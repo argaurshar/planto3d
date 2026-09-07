@@ -249,7 +249,10 @@ export async function buildBlockoutMaps(
     const edgeMat = new THREE.LineBasicMaterial({ color: COLORS.edge });
     const outline = (mesh: import("three").Mesh) => {
       // A child of the mesh, so it follows the proxy group's rotation/position.
-      mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry), edgeMat));
+      // Round meshes get a wide threshold so only the rims are drawn, not
+      // every facet of the cylinder.
+      const threshold = mesh.userData.roundOutline ? 30 : 1;
+      mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, threshold), edgeMat));
     };
     const outlineMarked = (root: import("three").Object3D) => {
       root.traverse((o) => {
