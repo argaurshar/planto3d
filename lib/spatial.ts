@@ -37,7 +37,10 @@ export const SPATIAL_EXTRACTION_PROMPT = [
   "Coordinates are integers normalized to 0-1000 with the Y coordinate first",
   "(top-left origin). Use a short, specific label (e.g. \"bed\", \"nightstand\",",
   "\"wardrobe\", \"sofa\", \"window\", \"door\").",
+  "For every bed ALSO return a separate \"pillows\" box covering just the pillow",
+  "symbols at its head, so the bed can be oriented.",
   "Example: [{\"label\":\"bed\",\"box_2d\":[300,350,720,650]},",
+  "{\"label\":\"pillows\",\"box_2d\":[300,350,380,650]},",
   "{\"label\":\"nightstand\",\"box_2d\":[300,300,420,350]},",
   "{\"label\":\"window\",\"box_2d\":[0,350,40,650]}]",
   "Limit to the 25 most prominent items.",
@@ -215,12 +218,22 @@ function countWord(n: number): string {
  * "bed, 2 nightstands, media cabinet, window" — for the UI coverage line.
  */
 export function summarizeLabels(boxes: SpatialBox[]): string {
-  if (!boxes.length) return "";
+  const items = boxes.filter((b) => !isHelperLabel(b.label));
+  if (!items.length) return "";
   const counts = new Map<string, number>();
-  for (const b of boxes) counts.set(b.label, (counts.get(b.label) ?? 0) + 1);
+  for (const b of items) counts.set(b.label, (counts.get(b.label) ?? 0) + 1);
   return [...counts.entries()]
     .map(([label, n]) => (n > 1 ? `${n} ${label}s` : label))
     .join(", ");
+}
+
+/**
+ * Orientation cues, not objects: the detector returns a "pillows" box for each
+ * bed so we know which end is the head. They are never drawn, counted or
+ * described — a "headboard" listed as its own item would become a second bed.
+ */
+export function isHelperLabel(label: string): boolean {
+  return /\b(pillow|pillows|cushion|cushions|headboard)\b/.test(label.toLowerCase());
 }
 
 /**
@@ -260,6 +273,7 @@ export function furnitureHeight(label: string): number {
   if (/\b(desk|table|dining table|dresser|vanity|sink|basin|counter|kitchen)\b/.test(l)) return 0.78;
   if (/\b(sofa|couch|armchair|chair|toilet|bathtub|bath|stool|bench)\b/.test(l)) return 0.85;
   if (/\b(bed|mattress)\b/.test(l)) return 0.55;
+  if (isHelperLabel(l)) return 0.12;
   if (/\b(nightstand|bedside|side table|coffee table|ottoman)\b/.test(l)) return 0.5;
   // Floor coverings are flat. A 0.5m prior turned every rug into a half-metre
   // block that the renderer then "furnished" as a bench or an ottoman.
@@ -371,31 +385,35 @@ export function cameraSpot(boxes: SpatialBox[]): CameraSpot {
   const door = doors.find((b) => !isSecondaryDoor(b.label)) ?? doors[0];
   const doorWall = door ? nearestWall(boxCenter(door).cx, boxCenter(door).cy) : null;
 
-  // 1. The plan's bottom edge, so the render keeps the plan's orientation:
-  // plan-left is render-left and the top of the plan is the back wall. The
-  // old "stand in the doorway" rule put the camera on whichever wall held the
-  // door — with a door at the top of the plan the whole view came out
-  // mirrored, which reads as "the layout changed" when compared to the plan,
-  // and the door itself was behind the lens, so the render could never show
-  // it. From the bottom edge a door on any other wall is IN frame and gets
-  // verified like everything else.
-  {
-    const along = door && doorWall === "near" ? clamp(boxCenter(door).cx) : 500;
-    const p = spotPoint("near", along);
-    if (!insideFurniture(boxes, p.x, p.y)) return { wall: "near", along, atDoor: doorWall === "near" };
-  }
-
-  // 2. Blocked there → the door wall.
-  if (door && doorWall && doorWall !== "near") {
+  // 1. In the doorway: the view a person gets at the entry point, which is
+  // what the product promises ("the complete view at the entry point"). The
+  // door itself is then behind the lens and never drawn, and a door at the
+  // top of the plan means the view is mirrored against the plan — accepted.
+  if (door && doorWall) {
     const { cx, cy } = boxCenter(door);
-    const along = clamp(doorWall === "far" ? cx : cy);
+    const [ymin, xmin, ymax, xmax] = door.box_2d;
+    const alongX = doorWall === "far" || doorWall === "near";
+    // Pulled toward the middle for framing, but never OUT of the door
+    // opening: "in front of the door" means within its span.
+    const lo = (alongX ? xmin : ymin) + 40;
+    const hi = (alongX ? xmax : ymax) - 40;
+    const pulled = clamp(alongX ? cx : cy);
+    const along = lo < hi ? Math.min(hi, Math.max(lo, pulled)) : alongX ? cx : cy;
     const p = spotPoint(doorWall, along);
     if (!insideFurniture(boxes, p.x, p.y)) return { wall: doorWall, along, atDoor: true };
+  }
+
+  // 2. No door (or tall furniture right inside it) → the plan's bottom edge,
+  // so at least the render keeps the plan's orientation.
+  {
+    const p = spotPoint("near", 500);
+    if (!insideFurniture(boxes, p.x, p.y)) return { wall: "near", along: 500, atDoor: false };
   }
 
   // 3. Emptiest wall first, then the others, skipping spots inside furniture.
   const counts: Record<Wall, number> = { far: 0, near: 0, left: 0, right: 0 };
   for (const b of boxes) {
+    if (isHelperLabel(b.label)) continue;
     const { cx, cy } = boxCenter(b);
     counts[nearestWall(cx, cy)] += 1;
   }
@@ -440,6 +458,45 @@ export function isBehindViewer(spot: CameraSpot, wall: Wall): boolean {
   return wall === spot.wall;
 }
 
+/**
+ * Which wall a furniture item's BACK faces (headboard, sofa back, wardrobe
+ * back). A bed uses its "pillows" box when the detector returned one: the side
+ * of the bed the pillows sit on is the head. Everything else uses the wall its
+ * edge is nearest to; a near-tie (a bed centred between two walls) goes to the
+ * wall facing the viewer, so the piece is seen from the front, not the back.
+ */
+export function facingWall(b: SpatialBox, boxes: SpatialBox[], spot: CameraSpot): Wall {
+  const [ymin, xmin, ymax, xmax] = b.box_2d;
+  const c = boxCenter(b);
+  if (furnitureCategory(b.label) === "bed") {
+    const cue = boxes.find((o) => {
+      if (!isHelperLabel(o.label)) return false;
+      const q = boxCenter(o);
+      return q.cx >= xmin - 30 && q.cx <= xmax + 30 && q.cy >= ymin - 30 && q.cy <= ymax + 30;
+    });
+    if (cue) {
+      const q = boxCenter(cue);
+      const dx = q.cx - c.cx;
+      const dy = q.cy - c.cy;
+      if (Math.abs(dy) >= Math.abs(dx)) return dy < 0 ? "far" : "near";
+      return dx < 0 ? "left" : "right";
+    }
+  }
+  const edges: Array<[number, Wall]> = [
+    [ymin, "far"],
+    [1000 - ymax, "near"],
+    [xmin, "left"],
+    [1000 - xmax, "right"],
+  ];
+  edges.sort((a, b) => a[0] - b[0]);
+  const [best, second] = edges;
+  if (second && second[0] - best[0] < 60) {
+    const facingViewer = OPPOSITE[spot.wall];
+    if (best[1] === facingViewer || second[1] === facingViewer) return facingViewer;
+  }
+  return best[1];
+}
+
 function wallWordFrom(spot: CameraSpot, wall: Wall): string {
   const from = spot.wall;
   if (isBehindViewer(spot, wall)) return "wall behind the viewer (not visible)";
@@ -467,6 +524,7 @@ export function describeLayout(boxes: SpatialBox[]): string {
   // Group identical labels so we can both count them and place each instance.
   const byLabel = new Map<string, SpatialBox[]>();
   for (const b of boxes) {
+    if (isHelperLabel(b.label)) continue;
     const arr = byLabel.get(b.label) ?? [];
     arr.push(b);
     byLabel.set(b.label, arr);

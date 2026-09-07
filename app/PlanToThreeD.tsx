@@ -10,7 +10,7 @@ import RoomPrompt from "./components/RoomPrompt";
 import RoomResult from "./components/RoomResult";
 import { requestOverview, requestRoomPrompt, requestRoomRender } from "@/lib/api";
 import { buildBlockoutMaps } from "@/lib/blockout";
-import { summarizeLabels, describeLayout, type SpatialBox } from "@/lib/spatial";
+import { summarizeLabels, describeLayout, isHelperLabel, type SpatialBox } from "@/lib/spatial";
 import { cropToDataUrl, type Rect } from "@/lib/crop";
 import { DEFAULT_BRIEF } from "@/lib/styles";
 import type { DesignBrief, LayoutVerification, RenderEngine, RoomType } from "@/lib/types";
@@ -285,7 +285,7 @@ export default function PlanToThreeD() {
       }
       if (isStale(id)) return;
       const lock: LayoutLock = {
-        count: boxes.length,
+        count: boxes.filter((b) => !isHelperLabel(b.label)).length,
         status: boxes.length === 0 ? "no-objects" : blockout ? "locked" : "no-webgl",
         summary: summarizeLabels(boxes),
       };

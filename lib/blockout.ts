@@ -12,10 +12,12 @@ import {
   boxCenter,
   cameraSpot,
   type CameraSpot,
+  facingWall,
   furnitureCategory,
   furnitureHeight,
   isBehindViewer,
   isDoorLabel,
+  isHelperLabel,
   isOpeningLabel,
   nearestWall,
   type FurnitureCategory,
@@ -125,12 +127,15 @@ function cameraPlacement(
   const { wall, along } = spot;
   const x = (along / 1000) * roomW;
   const z = (along / 1000) * roomD;
-  // Aim past the centre so the wall the viewer faces sits mid-frame.
+  // Aim past the centre so the wall the viewer faces sits mid-frame, and —
+  // when the eye is off-centre (a door in a corner) — diagonally toward the
+  // far side of the room, the classic entry shot that shows the most of it.
+  const swing = along < 420 ? 0.66 : along > 580 ? 0.34 : 0.5;
   const table: Record<Wall, { pos: Vec3; target: Vec3 }> = {
-    far: { pos: [x, EYE_H, -OUT], target: [roomW / 2, LOOK_H, roomD * 0.65] },
-    near: { pos: [x, EYE_H, roomD + OUT], target: [roomW / 2, LOOK_H, roomD * 0.35] },
-    left: { pos: [-OUT, EYE_H, z], target: [roomW * 0.65, LOOK_H, roomD / 2] },
-    right: { pos: [roomW + OUT, EYE_H, z], target: [roomW * 0.35, LOOK_H, roomD / 2] },
+    far: { pos: [x, EYE_H, -OUT], target: [roomW * swing, LOOK_H, roomD * 0.65] },
+    near: { pos: [x, EYE_H, roomD + OUT], target: [roomW * swing, LOOK_H, roomD * 0.35] },
+    left: { pos: [-OUT, EYE_H, z], target: [roomW * 0.65, LOOK_H, roomD * swing] },
+    right: { pos: [roomW + OUT, EYE_H, z], target: [roomW * 0.35, LOOK_H, roomD * swing] },
   };
   return table[wall];
 }
@@ -326,13 +331,13 @@ export async function buildBlockoutMaps(
     // table on legs, sofa with backrest…), each turned so its back faces its
     // nearest wall.
     for (const b of boxes) {
-      if (isOpeningLabel(b.label)) continue;
+      if (isOpeningLabel(b.label) || isHelperLabel(b.label)) continue;
       const [ymin, xmin, ymax, xmax] = b.box_2d;
       const cx = toX((xmin + xmax) / 2);
       const cz = toZ((ymin + ymax) / 2);
       const bw = Math.max(0.2, toX(Math.abs(xmax - xmin)));
       const bd = Math.max(0.2, toZ(Math.abs(ymax - ymin)));
-      const facing = nearestWall((xmin + xmax) / 2, (ymin + ymax) / 2);
+      const facing = facingWall(b, boxes, spot);
       const sideways = facing === "left" || facing === "right";
       const category = furnitureCategory(b.label);
       const proxy = buildFurniture(

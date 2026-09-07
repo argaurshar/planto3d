@@ -84,8 +84,21 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
      they must stay clearly darker than the walls and distinct from the floor —
      a first clay palette with a linen-cream bed and a sand rug all but
      vanished against the off-white shell, and with nothing left to preserve
-     Kontext re-imagined the whole layout. The camera stands **outside** the wall carrying the detected door
-     (that wall is culled), and the floor, ceiling and flanking walls are
+     Kontext re-imagined the whole layout. The camera stands **outside** the
+     wall carrying the door — **in the doorway**, the view a person gets at
+     the entry point, which is what the product promises (that wall is
+     culled, so the door itself is never in frame, and a door at the top of
+     the plan means the view is mirrored against the plan; both accepted).
+     Only with no door, or tall furniture right inside it, does `cameraSpot`
+     fall back to the plan's bottom edge (plan orientation preserved), then
+     the emptiest wall. Each furniture proxy's **back faces** the wall from
+     `facingWall`: a bed uses the **"pillows" box** the detector is asked to
+     return with every bed (the side the pillows sit on is the head — a bed
+     centred in the room used to show the back of its headboard to the
+     camera); everything else uses the wall its edge is nearest to, with a
+     near-tie going to the wall facing the viewer. Pillow/headboard boxes are
+     orientation cues only (`isHelperLabel`): never drawn, counted or
+     described. The floor, ceiling and flanking walls are
      stretched by the same offset so the frame stays bounded by real surfaces —
      standing inside a 3.4x3.0m bedroom put the eye on top of a wardrobe. The
      viewpoint is pulled toward the middle of its wall for framing. Openings
@@ -226,6 +239,7 @@ drops straight into `<img src>`.
   string is written **relative to the viewer** standing where the blockout
   camera stands (`cameraSpot` — one pure function shared by the blockout, the
   prompt writer and the verifier, so all three agree on which wall is "back").
+  It prefers the doorway, then the plan's bottom edge, then the emptiest wall.
   Only furniture at least 1m tall can reject a camera spot; the eye looks
   over rugs and low tables (a rug by the door used to flip the whole view).
   The `auto` action passes `needRoomSize: false` since it never returns it.

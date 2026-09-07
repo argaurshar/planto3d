@@ -89,8 +89,9 @@ export function buildFurniture(
       const mattH = 0.24;
       g.add(box(THREE, mats.clay(PROXY_COLORS.bedBase), w, baseH, d, 0, baseH / 2, 0, true));
       g.add(box(THREE, main, w - 0.06, mattH, d - 0.06, 0, baseH + mattH / 2, 0, true));
-      // Headboard against the wall side.
-      g.add(box(THREE, mats.clay(PROXY_COLORS.bedBase), w + 0.04, 1.05, 0.06, 0, 0.525, -d / 2 + 0.03, true));
+      // Headboard against the wall side: upholstered in the bed's own tone,
+      // not a dark slab — from a doorway on the head wall its back is in view.
+      g.add(box(THREE, mats.clay(lighten(color, -30)), w + 0.04, 0.95, 0.08, 0, 0.475, -d / 2 + 0.04, true));
       const pillowMat = mats.clay(PROXY_COLORS.pillow);
       const pw = Math.min(0.7, w * 0.42);
       const py = baseH + mattH + 0.06;
