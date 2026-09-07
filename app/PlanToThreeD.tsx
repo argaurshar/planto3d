@@ -97,6 +97,7 @@ type Action =
   /** The user edited the boxes: show them at once, the rebuild follows. */
   | { type: "SET_BOXES"; boxes: SpatialBox[] }
   | { type: "LAYOUT_REBUILT"; blockout: string | null; depth: string | null; lock: LayoutLock; layout: string }
+  | { type: "SET_ROOM_SIZE"; roomSize: RoomSize }
   | { type: "REWRITE" }
   | { type: "EDIT_PROMPT"; value: string }
   | { type: "RENDER_START" }
@@ -194,6 +195,8 @@ function reducer(state: State, action: Action): State {
       };
     case "SET_BOXES":
       return { ...state, boxes: action.boxes };
+    case "SET_ROOM_SIZE":
+      return { ...state, roomSize: action.roomSize };
     case "LAYOUT_REBUILT":
       return {
         ...state,
@@ -301,13 +304,21 @@ export default function PlanToThreeD() {
     return { blockout, depth, lock, layout: describeLayout(boxes) };
   }
 
-  // The user corrected the detection on the crop: rebuild the lock from the
-  // edited boxes without another detection call.
+  // The user corrected the detection (on the crop or in the 3D editor):
+  // rebuild the lock from the edited boxes without another detection call.
   const rebuildId = useRef(0);
   async function editBoxes(boxes: SpatialBox[]) {
     dispatch({ type: "SET_BOXES", boxes });
     const id = (rebuildId.current += 1);
     const built = await buildLayout(boxes, state.roomSize);
+    if (rebuildId.current !== id) return;
+    dispatch({ type: "LAYOUT_REBUILT", ...built });
+  }
+  async function editRoomSize(roomSize: RoomSize) {
+    if (!(roomSize.width > 0.5) || !(roomSize.depth > 0.5)) return;
+    dispatch({ type: "SET_ROOM_SIZE", roomSize });
+    const id = (rebuildId.current += 1);
+    const built = await buildLayout(state.boxes, roomSize);
     if (rebuildId.current !== id) return;
     dispatch({ type: "LAYOUT_REBUILT", ...built });
   }
@@ -478,6 +489,8 @@ export default function PlanToThreeD() {
         <RoomPrompt
           cropDataUrl={state.cropDataUrl}
           boxes={state.boxes}
+          cropAspect={state.cropAspect}
+          roomSize={state.roomSize}
           blockoutDataUrl={state.blockoutDataUrl}
           layoutLock={state.layoutLock}
           prompt={state.roomPrompt}
@@ -485,6 +498,7 @@ export default function PlanToThreeD() {
           error={state.error}
           onPromptChange={(value) => dispatch({ type: "EDIT_PROMPT", value })}
           onBoxesChange={editBoxes}
+          onRoomSizeChange={editRoomSize}
           onRender={renderRoom}
           onRewrite={rewritePrompt}
           onBack={pickAnother}
