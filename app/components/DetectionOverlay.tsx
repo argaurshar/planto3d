@@ -1,6 +1,6 @@
 "use client";
 
-import { cameraSpot, isOpeningLabel, type SpatialBox } from "@/lib/spatial";
+import { cameraSpot, isHelperLabel, isOpeningLabel, type SpatialBox } from "@/lib/spatial";
 
 interface Props {
   cropDataUrl: string;
@@ -43,7 +43,8 @@ export default function DetectionOverlay({ cropDataUrl, boxes, alt }: Props) {
           {boxes.map((b, i) => {
             const [ymin, xmin, ymax, xmax] = b.box_2d;
             const opening = isOpeningLabel(b.label);
-            const stroke = opening ? "#38bdf8" : "#f59e0b";
+            // Pillows are an orientation cue for the bed, not an object.
+            const stroke = opening ? "#38bdf8" : isHelperLabel(b.label) ? "#e5e7eb" : "#f59e0b";
             return (
               <g key={i}>
                 <rect
