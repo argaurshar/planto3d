@@ -136,6 +136,9 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
      The result page shows the whole **evidence chain** — crop + boxes → clay
      massing → render — so a wrong render can be traced to its stage: massing
      ≠ plan means detection is at fault, render ≠ massing means the renderer.
+     The same 3D editor sits on the result page too ("Adjust the 3D layout,
+     then re-render"): edits rebuild the lock in place and **Re-render with
+     this layout** (Regenerate) renders the edited scene.
    - **3b — render** — when a blockout is present, `action:"render"` turns it
      into the photo with the **render engine** chosen in `RoomSetup`
      (`lib/renderEngine.ts`, one transport-agnostic dispatcher used by the
