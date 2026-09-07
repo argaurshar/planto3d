@@ -311,6 +311,8 @@ export function facingRotation(wall: Wall): number {
 
 export interface WallOpening {
   kind: "door" | "window";
+  /** Index of the box this opening came from (for editors). */
+  index?: number;
   /** Start/end along the wall, metres, in the wall's own axis (x for far/near, z for left/right). */
   start: number;
   end: number;
@@ -353,12 +355,23 @@ export function buildWall(THREE: ThreeNS, mats: ProxyMaterials, spec: WallSpec, 
     else m.position.set(p, y, a);
     return m;
   };
-  const piece = (mat: Material, s: number, e: number, y0: number, y1: number, p = mid, t = T, outline = false) => {
+  const piece = (
+    mat: Material,
+    s: number,
+    e: number,
+    y0: number,
+    y1: number,
+    p = mid,
+    t = T,
+    outline = false,
+    boxIndex?: number,
+  ) => {
     if (e - s <= 0.001 || y1 - y0 <= 0.001) return;
     const len = e - s;
     const m = along
       ? box(THREE, mat, len, y1 - y0, t, 0, 0, 0, outline)
       : box(THREE, mat, t, y1 - y0, len, 0, 0, 0, outline);
+    if (boxIndex !== undefined) m.userData.boxIndex = boxIndex;
     g.add(place(m, (s + e) / 2, (y0 + y1) / 2, p));
   };
   const skirt = (s: number, e: number) =>
@@ -383,7 +396,7 @@ export function buildWall(THREE: ThreeNS, mats: ProxyMaterials, spec: WallSpec, 
       piece(trimMat, o.end, o.end + FRAME_W, 0, DOOR_H + FRAME_W, fp, T + 0.02);
       piece(trimMat, o.start - FRAME_W, o.end + FRAME_W, DOOR_H, DOOR_H + FRAME_W, fp, T + 0.02);
       // Closed leaf set into the opening, with a handle.
-      piece(mats.clay(PROXY_COLORS.doorLeaf), o.start + 0.02, o.end - 0.02, 0.01, DOOR_H - 0.01, mid, 0.045, true);
+      piece(mats.clay(PROXY_COLORS.doorLeaf), o.start + 0.02, o.end - 0.02, 0.01, DOOR_H - 0.01, mid, 0.045, true, o.index);
       const handle = along
         ? box(THREE, mats.clay(PROXY_COLORS.handle), 0.12, 0.02, 0.02, 0, 0, 0)
         : box(THREE, mats.clay(PROXY_COLORS.handle), 0.02, 0.02, 0.12, 0, 0, 0);
@@ -393,7 +406,7 @@ export function buildWall(THREE: ThreeNS, mats: ProxyMaterials, spec: WallSpec, 
       piece(wallMat, o.start, o.end, 0, WINDOW_SILL); // under the sill
       skirt(o.start, o.end);
       // Glass, unlit so it reads as daylight, with a cross mullion.
-      piece(mats.flat(PROXY_COLORS.glass), o.start, o.end, WINDOW_SILL, WINDOW_HEAD, mid, 0.02, true);
+      piece(mats.flat(PROXY_COLORS.glass), o.start, o.end, WINDOW_SILL, WINDOW_HEAD, mid, 0.02, true, o.index);
       const midA = (o.start + o.end) / 2;
       const midY = (WINDOW_SILL + WINDOW_HEAD) / 2;
       piece(mats.clay(PROXY_COLORS.mullion), midA - 0.02, midA + 0.02, WINDOW_SILL, WINDOW_HEAD, mid, 0.05);

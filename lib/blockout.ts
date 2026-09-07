@@ -169,6 +169,225 @@ export interface BlockoutMaps {
  * camera. The depth map is the pixel-aligned structural signal an image model
  * can't misread — the geometry is already ours, so it costs one extra draw.
  */
+/** The assembled Three.js room: shared by the offscreen render and the live editor. */
+export interface AssembledScene {
+  scene: import("three").Scene;
+  roomW: number;
+  roomD: number;
+  shellW: number;
+  shellD: number;
+  spot: CameraSpot;
+  /** The render camera (doorway, eye level) for this room. */
+  view: { pos: Vec3; target: Vec3 };
+  /** Release every geometry and material. */
+  dispose: () => void;
+}
+
+/**
+ * Build the clay room from the boxes: lights, floor, ceiling, walls with
+ * openings (lib/proxies.ts) and a proxy per furniture item. Furniture groups
+ * and opening panels carry `userData.boxIndex` so an editor can map a click
+ * back to its box. ONE assembly for the render and the editor, so what the
+ * user edits is exactly what gets rendered.
+ */
+export function assembleScene(
+  THREE: typeof import("three"),
+  boxes: SpatialBox[],
+  cropAspect: number,
+  opts: BlockoutOptions = {},
+): AssembledScene {
+  const aspect = Number.isFinite(cropAspect) && cropAspect > 0 ? cropAspect : 1;
+  const { roomW, roomD } = footprint(aspect, opts.roomSize);
+  // One viewpoint, shared by the wall culling and the camera (and, via
+  // describeLayout, by the prompt writer and the verifier).
+  const spot = cameraSpot(boxes);
+
+  const scene = new THREE.Scene();
+  // Lambert + soft light gives the massing real shading, so the image Kontext
+  // receives already has believable form and falloff instead of reading as a
+  // flat CG poster. The window stays unlit so it glows like daylight.
+  const clay = (color: number) => new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide });
+  const flat = (color: number) => new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide });
+  // The ground half must stay light: the ceiling's normal faces down, so a dark
+  // ground colour painted it a dim blue-grey instead of a bright ceiling.
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xd7d2ca, 1.1));
+  scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+  // The sun casts real shadows: contact shadows are what separate a block
+  // from the floor for the edit model, so it keeps the object where it is
+  // instead of dissolving it into the surface.
+  const sun = new THREE.DirectionalLight(0xfff4e6, 2.6);
+  sun.position.set(roomW * 0.9, 3.6, roomD * 0.1);
+  sun.target.position.set(roomW / 2, 0, roomD / 2);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.bias = -0.0006;
+  const reach = Math.max(roomW, roomD) + VIEW_OUT + 1;
+  sun.shadow.camera.left = -reach;
+  sun.shadow.camera.right = reach;
+  sun.shadow.camera.top = reach;
+  sun.shadow.camera.bottom = -reach;
+  sun.shadow.camera.near = 0.1;
+  sun.shadow.camera.far = reach * 3;
+  scene.add(sun);
+  scene.add(sun.target);
+  // Every block gets a dark outline. Colour alone proved too weak a
+  // structural signal; explicit edges are what Kontext preserves most
+  // faithfully, whatever the tones become.
+  const edgeMat = new THREE.LineBasicMaterial({ color: COLORS.edge });
+  const outline = (mesh: import("three").Mesh) => {
+    // A child of the mesh, so it follows the proxy group's rotation/position.
+    // Round meshes get a wide threshold so only the rims are drawn, not
+    // every facet of the cylinder.
+    const threshold = mesh.userData.roundOutline ? 30 : 1;
+    mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, threshold), edgeMat));
+  };
+  const outlineMarked = (root: import("three").Object3D) => {
+    root.traverse((o) => {
+      const m = o as import("three").Mesh;
+      if (m.isMesh && m.userData.outline) outline(m);
+    });
+  };
+
+  // 0-1000 (top = far, i.e. Z=0) → metres.
+  const toX = (v: number) => (v / 1000) * roomW;
+  const toZ = (v: number) => (v / 1000) * roomD;
+
+  // The shell is stretched by VIEW_OUT on the camera's side so the floor,
+  // ceiling and flanking walls still fill the frame from outside the room.
+  let xMin = 0;
+  let xMax = roomW;
+  let zMin = 0;
+  let zMax = roomD;
+  if (spot.wall === "near") zMax += VIEW_OUT;
+  else if (spot.wall === "far") zMin -= VIEW_OUT;
+  else if (spot.wall === "left") xMin -= VIEW_OUT;
+  else xMax += VIEW_OUT;
+  const shellW = xMax - xMin;
+  const shellD = zMax - zMin;
+  const midX = (xMin + xMax) / 2;
+  const midZ = (zMin + zMax) / 2;
+
+  // Floor + ceiling. The ceiling matters: without one the top of the frame was
+  // open background, which reads as an unfinished 3D scene rather than a room.
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(shellW, shellD), clay(COLORS.floor));
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(midX, 0, midZ);
+  floor.receiveShadow = true;
+  scene.add(floor);
+  const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(shellW, shellD), clay(COLORS.ceiling));
+  ceiling.rotation.x = Math.PI / 2;
+  ceiling.position.set(midX, WALL_H, midZ);
+  ceiling.name = "ceiling"; // the editor hides it when looking down from above
+  scene.add(ceiling);
+
+  // Walls with real thickness and their openings cut in (lib/proxies.ts):
+  // full-height pieces between openings, lintels, sills, frames, a closed
+  // door leaf, glass with a mullion, skirting. Every wall except the one the
+  // camera stands outside of — that one would sit between the eye and the
+  // room and block the whole view — and, with it, any opening detected on it
+  // (a door panel 1.8m in front of the lens used to eat a third of the frame).
+  const openingsByWall: Record<Wall, WallOpening[]> = { far: [], near: [], left: [], right: [] };
+  for (const [i, b] of boxes.entries()) {
+    if (!isOpeningLabel(b.label)) continue;
+    const c = boxCenter(b);
+    const wall = nearestWall(c.cx, c.cy);
+    const [ymin, xmin, ymax, xmax] = b.box_2d;
+    const alongX = wall === "far" || wall === "near";
+    const kind = isDoorLabel(b.label) ? "door" : "window";
+    let start = alongX ? toX(xmin) : toZ(ymin);
+    let end = alongX ? toX(xmax) : toZ(ymax);
+    const minW = kind === "door" ? 0.8 : 0.6;
+    if (end - start < minW) {
+      const m = (start + end) / 2;
+      start = m - minW / 2;
+      end = m + minW / 2;
+    }
+    openingsByWall[wall].push({ kind, start, end, index: i });
+  }
+  const mats: ProxyMaterials = { clay, flat };
+  const wallSpecs: WallSpec[] = [
+    { wall: "far", a0: xMin, a1: xMax, at: 0, outward: -1, openings: openingsByWall.far, wallH: WALL_H },
+    { wall: "near", a0: xMin, a1: xMax, at: roomD, outward: 1, openings: openingsByWall.near, wallH: WALL_H },
+    { wall: "left", a0: zMin, a1: zMax, at: 0, outward: -1, openings: openingsByWall.left, wallH: WALL_H },
+    { wall: "right", a0: zMin, a1: zMax, at: roomW, outward: 1, openings: openingsByWall.right, wallH: WALL_H },
+  ];
+  for (const spec of wallSpecs) {
+    if (isBehindViewer(spot, spec.wall)) continue;
+    const group = buildWall(THREE, mats, spec, COLORS.wall);
+    scene.add(group);
+    outlineMarked(group);
+  }
+
+  // Furniture proxies (bed with headboard and pillows, wardrobe with doors,
+  // table on legs, sofa with backrest…), each turned so its back faces its
+  // nearest wall.
+  for (const [i, b] of boxes.entries()) {
+    if (isOpeningLabel(b.label) || isHelperLabel(b.label)) continue;
+    const [ymin, xmin, ymax, xmax] = b.box_2d;
+    const cx = toX((xmin + xmax) / 2);
+    const cz = toZ((ymin + ymax) / 2);
+    const bw = Math.max(0.2, toX(Math.abs(xmax - xmin)));
+    const bd = Math.max(0.2, toZ(Math.abs(ymax - ymin)));
+    const facing = facingWall(b, boxes, spot);
+    const sideways = facing === "left" || facing === "right";
+    const category = furnitureCategory(b.label);
+    const proxy = buildFurniture(
+      THREE,
+      mats,
+      category,
+      b.label,
+      CATEGORY_COLOR[category],
+      sideways ? bd : bw,
+      furnitureHeight(b.label),
+      sideways ? bw : bd,
+    );
+    proxy.position.set(cx, 0, cz);
+    proxy.rotation.y = facingRotation(facing);
+    proxy.userData.boxIndex = i;
+    scene.add(proxy);
+    outlineMarked(proxy);
+  }
+
+
+  const view = cameraPlacement(spot, roomW, roomD);
+  const dispose = () => {
+    scene.traverse((o) => {
+      const mesh = o as import("three").Mesh;
+      if (mesh.geometry) mesh.geometry.dispose();
+      const m = (mesh as unknown as { material?: import("three").Material }).material;
+      if (m && typeof (m as import("three").Material).dispose === "function") {
+        (m as import("three").Material).dispose();
+      }
+    });
+  };
+  return { scene, roomW, roomD, shellW, shellD, spot, view, dispose };
+}
+
+/** Metres → 0-1000 crop units and back, for editors that move proxies in 3D. */
+export function roomFootprint(cropAspect: number, roomSize?: RoomSize | null): { roomW: number; roomD: number } {
+  const aspect = Number.isFinite(cropAspect) && cropAspect > 0 ? cropAspect : 1;
+  return footprint(aspect, roomSize);
+}
+
+/** The eye-level render camera for an assembled room. */
+export function makeRenderCamera(
+  THREE: typeof import("three"),
+  a: AssembledScene,
+  aspectRatio: number,
+): import("three").PerspectiveCamera {
+  const camera = new THREE.PerspectiveCamera(72, aspectRatio, 0.05, 100);
+  camera.position.set(a.view.pos[0], a.view.pos[1], a.view.pos[2]);
+  camera.lookAt(a.view.target[0], a.view.target[1], a.view.target[2]);
+  return camera;
+}
+
+export const CEILING_HEIGHT = WALL_H;
+
+/**
+ * Same scene, two passes: the clay massing and a depth map from the identical
+ * camera. The depth map is the pixel-aligned structural signal an image model
+ * can't misread — the geometry is already ours, so it costs one extra draw.
+ */
 export async function buildBlockoutMaps(
   boxes: SpatialBox[],
   cropAspect: number,
@@ -178,12 +397,6 @@ export async function buildBlockoutMaps(
 
   const width = opts.width ?? 768;
   const height = opts.height ?? 576;
-
-  const aspect = Number.isFinite(cropAspect) && cropAspect > 0 ? cropAspect : 1;
-  const { roomW, roomD } = footprint(aspect, opts.roomSize);
-  // One viewpoint, shared by the wall culling and the camera (and, via
-  // describeLayout, by the prompt writer and the verifier).
-  const spot = cameraSpot(boxes);
 
   let THREE: typeof import("three");
   try {
@@ -209,163 +422,19 @@ export async function buildBlockoutMaps(
     return null; // no WebGL context
   }
 
+  let assembled: AssembledScene | null = null;
   try {
     renderer.setSize(width, height, false);
     renderer.setClearColor(0xd9d6d0, 1);
-
-    const scene = new THREE.Scene();
-    // Lambert + soft light gives the massing real shading, so the image Kontext
-    // receives already has believable form and falloff instead of reading as a
-    // flat CG poster. The window stays unlit so it glows like daylight.
-    const clay = (color: number) => new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide });
-    const flat = (color: number) => new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide });
-    // The ground half must stay light: the ceiling's normal faces down, so a dark
-    // ground colour painted it a dim blue-grey instead of a bright ceiling.
-    scene.add(new THREE.HemisphereLight(0xffffff, 0xd7d2ca, 1.1));
-    scene.add(new THREE.AmbientLight(0xffffff, 0.25));
     // The sun casts real shadows: contact shadows are what separate a block
     // from the floor for the edit model, so it keeps the object where it is
     // instead of dissolving it into the surface.
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    const sun = new THREE.DirectionalLight(0xfff4e6, 2.6);
-    sun.position.set(roomW * 0.9, 3.6, roomD * 0.1);
-    sun.target.position.set(roomW / 2, 0, roomD / 2);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.bias = -0.0006;
-    const reach = Math.max(roomW, roomD) + VIEW_OUT + 1;
-    sun.shadow.camera.left = -reach;
-    sun.shadow.camera.right = reach;
-    sun.shadow.camera.top = reach;
-    sun.shadow.camera.bottom = -reach;
-    sun.shadow.camera.near = 0.1;
-    sun.shadow.camera.far = reach * 3;
-    scene.add(sun);
-    scene.add(sun.target);
-    // Every block gets a dark outline. Colour alone proved too weak a
-    // structural signal; explicit edges are what Kontext preserves most
-    // faithfully, whatever the tones become.
-    const edgeMat = new THREE.LineBasicMaterial({ color: COLORS.edge });
-    const outline = (mesh: import("three").Mesh) => {
-      // A child of the mesh, so it follows the proxy group's rotation/position.
-      // Round meshes get a wide threshold so only the rims are drawn, not
-      // every facet of the cylinder.
-      const threshold = mesh.userData.roundOutline ? 30 : 1;
-      mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, threshold), edgeMat));
-    };
-    const outlineMarked = (root: import("three").Object3D) => {
-      root.traverse((o) => {
-        const m = o as import("three").Mesh;
-        if (m.isMesh && m.userData.outline) outline(m);
-      });
-    };
 
-    // 0-1000 (top = far, i.e. Z=0) → metres.
-    const toX = (v: number) => (v / 1000) * roomW;
-    const toZ = (v: number) => (v / 1000) * roomD;
-
-    // The shell is stretched by VIEW_OUT on the camera's side so the floor,
-    // ceiling and flanking walls still fill the frame from outside the room.
-    let xMin = 0;
-    let xMax = roomW;
-    let zMin = 0;
-    let zMax = roomD;
-    if (spot.wall === "near") zMax += VIEW_OUT;
-    else if (spot.wall === "far") zMin -= VIEW_OUT;
-    else if (spot.wall === "left") xMin -= VIEW_OUT;
-    else xMax += VIEW_OUT;
-    const shellW = xMax - xMin;
-    const shellD = zMax - zMin;
-    const midX = (xMin + xMax) / 2;
-    const midZ = (zMin + zMax) / 2;
-
-    // Floor + ceiling. The ceiling matters: without one the top of the frame was
-    // open background, which reads as an unfinished 3D scene rather than a room.
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(shellW, shellD), clay(COLORS.floor));
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.set(midX, 0, midZ);
-    floor.receiveShadow = true;
-    scene.add(floor);
-    const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(shellW, shellD), clay(COLORS.ceiling));
-    ceiling.rotation.x = Math.PI / 2;
-    ceiling.position.set(midX, WALL_H, midZ);
-    scene.add(ceiling);
-
-    // Walls with real thickness and their openings cut in (lib/proxies.ts):
-    // full-height pieces between openings, lintels, sills, frames, a closed
-    // door leaf, glass with a mullion, skirting. Every wall except the one the
-    // camera stands outside of — that one would sit between the eye and the
-    // room and block the whole view — and, with it, any opening detected on it
-    // (a door panel 1.8m in front of the lens used to eat a third of the frame).
-    const openingsByWall: Record<Wall, WallOpening[]> = { far: [], near: [], left: [], right: [] };
-    for (const b of boxes) {
-      if (!isOpeningLabel(b.label)) continue;
-      const c = boxCenter(b);
-      const wall = nearestWall(c.cx, c.cy);
-      const [ymin, xmin, ymax, xmax] = b.box_2d;
-      const alongX = wall === "far" || wall === "near";
-      const kind = isDoorLabel(b.label) ? "door" : "window";
-      let start = alongX ? toX(xmin) : toZ(ymin);
-      let end = alongX ? toX(xmax) : toZ(ymax);
-      const minW = kind === "door" ? 0.8 : 0.6;
-      if (end - start < minW) {
-        const m = (start + end) / 2;
-        start = m - minW / 2;
-        end = m + minW / 2;
-      }
-      openingsByWall[wall].push({ kind, start, end });
-    }
-    const mats: ProxyMaterials = { clay, flat };
-    const wallSpecs: WallSpec[] = [
-      { wall: "far", a0: xMin, a1: xMax, at: 0, outward: -1, openings: openingsByWall.far, wallH: WALL_H },
-      { wall: "near", a0: xMin, a1: xMax, at: roomD, outward: 1, openings: openingsByWall.near, wallH: WALL_H },
-      { wall: "left", a0: zMin, a1: zMax, at: 0, outward: -1, openings: openingsByWall.left, wallH: WALL_H },
-      { wall: "right", a0: zMin, a1: zMax, at: roomW, outward: 1, openings: openingsByWall.right, wallH: WALL_H },
-    ];
-    for (const spec of wallSpecs) {
-      if (isBehindViewer(spot, spec.wall)) continue;
-      const group = buildWall(THREE, mats, spec, COLORS.wall);
-      scene.add(group);
-      outlineMarked(group);
-    }
-
-    // Furniture proxies (bed with headboard and pillows, wardrobe with doors,
-    // table on legs, sofa with backrest…), each turned so its back faces its
-    // nearest wall.
-    for (const b of boxes) {
-      if (isOpeningLabel(b.label) || isHelperLabel(b.label)) continue;
-      const [ymin, xmin, ymax, xmax] = b.box_2d;
-      const cx = toX((xmin + xmax) / 2);
-      const cz = toZ((ymin + ymax) / 2);
-      const bw = Math.max(0.2, toX(Math.abs(xmax - xmin)));
-      const bd = Math.max(0.2, toZ(Math.abs(ymax - ymin)));
-      const facing = facingWall(b, boxes, spot);
-      const sideways = facing === "left" || facing === "right";
-      const category = furnitureCategory(b.label);
-      const proxy = buildFurniture(
-        THREE,
-        mats,
-        category,
-        b.label,
-        CATEGORY_COLOR[category],
-        sideways ? bd : bw,
-        furnitureHeight(b.label),
-        sideways ? bw : bd,
-      );
-      proxy.position.set(cx, 0, cz);
-      proxy.rotation.y = facingRotation(facing);
-      scene.add(proxy);
-      outlineMarked(proxy);
-    }
-
-    // Eye-level camera standing at the doorway looking into the room, so every
-    // wall the room is "read" against — including the one the bed sits on and
-    // the one carrying the window — is in frame.
-    const { pos, target } = cameraPlacement(spot, roomW, roomD);
-    const camera = new THREE.PerspectiveCamera(72, width / height, 0.05, 100);
-    camera.position.set(pos[0], pos[1], pos[2]);
-    camera.lookAt(target[0], target[1], target[2]);
+    assembled = assembleScene(THREE, boxes, cropAspect, opts);
+    const { scene, shellW, shellD } = assembled;
+    const camera = makeRenderCamera(THREE, assembled, width / height);
 
     renderer.render(scene, camera);
     const clayUrl = canvas.toDataURL("image/png");
@@ -390,20 +459,13 @@ export async function buildBlockoutMaps(
     scene.overrideMaterial = null;
     depthMat.dispose();
 
-    // Free GPU resources.
-    scene.traverse((o) => {
-      const mesh = o as import("three").Mesh;
-      if (mesh.geometry) mesh.geometry.dispose();
-      const m = (mesh as unknown as { material?: import("three").Material }).material;
-      if (m && typeof (m as import("three").Material).dispose === "function") {
-        (m as import("three").Material).dispose();
-      }
-    });
+    assembled.dispose();
     renderer.dispose();
     return { clay: clayUrl, depth };
   } catch (e) {
     if (typeof console !== "undefined") console.debug("[voxa] blockout: render failed", e);
     try {
+      assembled?.dispose();
       renderer.dispose();
     } catch {
       /* ignore */

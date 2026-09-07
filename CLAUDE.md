@@ -114,11 +114,22 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
      ("Layout lock") is shown in `components/RoomPrompt.tsx`, and the detected
      boxes are drawn over the plan crop with a marker for where the camera
      stands (`components/DetectionOverlay.tsx`; the `boxes` live in state).
-     On the prompt step the boxes are **editable**: drag to move, corner
-     handles to resize, Delete to remove, relabel, or "+ Add box" and draw a
-     missing item. Every edit rebuilds the clay massing, depth map and layout
-     text client-side (`editBoxes` → `buildLayout`; `roomSize` is kept in
-     state so the rebuild stays at true scale) — no detection call, no cost.
+     On the prompt step the boxes are **editable**, in 2D on the crop (drag
+     to move, corner handles to resize, Delete to remove, relabel, or "+ Add
+     box" and draw a missing item) and in **3D** (`components/LayoutEditor3D.tsx`,
+     full width below the grid): a live Three.js scene built by the SAME
+     `assembleScene` the render uses, with OrbitControls to inspect, "Entry
+     view" (the render camera) and "Top view" (the ceiling is hidden from
+     above), click-to-select (proxies and opening panels carry
+     `userData.boxIndex`), drag across the floor (doors and windows snap to
+     the nearest wall on drop), Delete, an inline label, width/depth in
+     metres, Rotate 90°, a palette of furniture/doors/windows to add, and the
+     room's own size. Every edit — from either editor — goes back into the
+     one box list and rebuilds the clay massing, depth map and layout text
+     client-side (`editBoxes` / `editRoomSize` → `buildLayout`; `roomSize` is
+     kept in state so the rebuild stays at true scale) — no detection call,
+     no cost, and the 2D overlay, the 3D view and the render can never
+     disagree.
      Detection is good but not perfect (it invented a window and missed a
      unit on one plan); fixing it here is the cheapest route to an exact
      layout, and the render then inherits the correction.
@@ -293,7 +304,8 @@ app/
     DownloadButton.tsx  # blob-fetch download for remote images
     RoomSelector.tsx    # box drawing over the plan
     RoomSetup.tsx       # per-room interior type + style table
-    DetectionOverlay.tsx # plan crop with the detected boxes + camera marker drawn over it
+    DetectionOverlay.tsx # plan crop with the detected boxes + camera marker drawn over it (editable)
+    LayoutEditor3D.tsx  # live Three.js room editor: select/drag/delete/add/resize, room size
     RoomPrompt.tsx      # editable auto-written interior prompt + Render
     RoomResult.tsx      # evidence chain (crop+boxes → clay massing → render) + Regenerate/history
   api/
@@ -308,7 +320,7 @@ lib/
                         #   "generate task timeout" grace (120s), timeout messages
   verifyLoop.ts         # render → verify → one corrective retry (shared by route + static)
   renderEngine.ts       # reference / structure / edit engine dispatch (shared by route + static)
-  blockout.ts           # eye-level 3D blockout (Three.js) from boxes → render lock
+  blockout.ts           # assembleScene (shared by render + editor) + clay/depth offscreen render
   proxies.ts            # scene assembly: furniture proxies + walls with openings (Three.js)
   prompts.ts            # overview + prompt-writer system + room render templates
   styles.ts             # interior-design style presets + brief resolution

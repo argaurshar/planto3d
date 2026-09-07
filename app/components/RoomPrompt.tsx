@@ -1,13 +1,17 @@
 "use client";
 
 import DetectionOverlay from "./DetectionOverlay";
+import LayoutEditor3D from "./LayoutEditor3D";
 import type { LayoutLock } from "../PlanToThreeD";
-import type { SpatialBox } from "@/lib/spatial";
+import type { RoomSize, SpatialBox } from "@/lib/spatial";
 
 interface Props {
   cropDataUrl: string | null;
   /** Detected boxes, drawn over the crop. */
   boxes: SpatialBox[];
+  /** Pixel aspect (w/h) of the crop and the room's real size, for the 3D editor. */
+  cropAspect: number;
+  roomSize: RoomSize | null;
   /** Eye-level 3D blockout (PNG data URL) that locks the render's layout. */
   blockoutDataUrl: string | null;
   /** Whether the render is geometry-locked to the blockout, and why not if not. */
@@ -17,8 +21,9 @@ interface Props {
   stage: "idle" | "writing" | "rendering";
   error: string | null;
   onPromptChange: (value: string) => void;
-  /** The user corrected the detected boxes on the crop. */
+  /** The user corrected the detected boxes (on the crop or in 3D). */
   onBoxesChange: (boxes: SpatialBox[]) => void;
+  onRoomSizeChange: (size: RoomSize) => void;
   onRender: () => void;
   onRewrite: () => void;
   onBack: () => void;
@@ -32,6 +37,8 @@ interface Props {
 export default function RoomPrompt({
   cropDataUrl,
   boxes,
+  cropAspect,
+  roomSize,
   blockoutDataUrl,
   layoutLock,
   prompt,
@@ -39,6 +46,7 @@ export default function RoomPrompt({
   error,
   onPromptChange,
   onBoxesChange,
+  onRoomSizeChange,
   onRender,
   onRewrite,
   onBack,
@@ -69,20 +77,12 @@ export default function RoomPrompt({
           )}
           {!writing && (
             <div className="space-y-1">
-              <figcaption className="eyebrow">Layout lock (eye-level)</figcaption>
+              <figcaption className="eyebrow">Layout lock</figcaption>
               {blockoutDataUrl ? (
                 <>
-                  <div className="media-frame bg-white">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={blockoutDataUrl}
-                      alt="Eye-level 3D blockout that locks the render's layout"
-                      className="block w-full"
-                    />
-                  </div>
                   <p className="text-xs text-emerald-400">
-                    ● ON — {layoutLock.count} object{layoutLock.count === 1 ? "" : "s"} detected; the
-                    render preserves this viewpoint and layout.
+                    ● ON — {layoutLock.count} object{layoutLock.count === 1 ? "" : "s"}; the render
+                    preserves the viewpoint and layout shown in the 3D editor below.
                   </p>
                   {layoutLock.summary && (
                     <p className="text-xs text-neutral-400">Detected: {layoutLock.summary}.</p>
@@ -93,8 +93,8 @@ export default function RoomPrompt({
                   ● OFF —{" "}
                   {layoutLock.status === "no-webgl"
                     ? "the 3D preview couldn't render in this browser"
-                    : "no objects were detected in the crop"}
-                  ; rendering from the prompt only (layout may drift).
+                    : "no objects were detected in the crop — add them in the 3D editor below"}
+                  ; until then the render comes from the prompt only (layout may drift).
                 </p>
               )}
             </div>
@@ -126,6 +126,25 @@ export default function RoomPrompt({
           />
         </div>
       </div>
+
+      {!writing && cropDataUrl && (
+        <section className="space-y-2">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <span className="eyebrow">3D layout (editable) · this is what gets rendered</span>
+            <span className="text-xs text-neutral-500">
+              Move, resize, rotate, relabel or delete any piece; add furniture, doors and windows;
+              set the room size. Every change rebuilds the lock at once, at no cost.
+            </span>
+          </div>
+          <LayoutEditor3D
+            boxes={boxes}
+            cropAspect={cropAspect}
+            roomSize={roomSize}
+            onChange={onBoxesChange}
+            onRoomSizeChange={onRoomSizeChange}
+          />
+        </section>
+      )}
 
       {error && <p className="text-sm text-red-400">{error}</p>}
 
