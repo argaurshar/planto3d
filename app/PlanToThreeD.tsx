@@ -510,6 +510,10 @@ export default function PlanToThreeD() {
           cropDataUrl={state.cropDataUrl}
           boxes={state.boxes}
           blockoutDataUrl={state.blockoutDataUrl}
+          cropAspect={state.cropAspect}
+          roomSize={state.roomSize}
+          onBoxesChange={editBoxes}
+          onRoomSizeChange={editRoomSize}
           layoutLock={state.layoutLock}
           versions={state.roomVersions}
           currentIndex={state.currentVersion}

@@ -2,8 +2,9 @@
 
 import DownloadButton from "./DownloadButton";
 import DetectionOverlay from "./DetectionOverlay";
+import LayoutEditor3D from "./LayoutEditor3D";
 import type { LayoutLock, RoomVersion } from "../PlanToThreeD";
-import type { SpatialBox } from "@/lib/spatial";
+import type { RoomSize, SpatialBox } from "@/lib/spatial";
 import { RENDER_ENGINES } from "@/lib/types";
 
 interface Props {
@@ -12,6 +13,11 @@ interface Props {
   boxes: SpatialBox[];
   /** The clay massing the render was locked to. */
   blockoutDataUrl: string | null;
+  /** For the 3D editor: crop aspect, room size, and the edit callbacks. */
+  cropAspect: number;
+  roomSize: RoomSize | null;
+  onBoxesChange: (boxes: SpatialBox[]) => void;
+  onRoomSizeChange: (size: RoomSize) => void;
   layoutLock: LayoutLock;
   /** Every render of this room; each carries its own layout check. */
   versions: RoomVersion[];
@@ -30,6 +36,10 @@ export default function RoomResult({
   cropDataUrl,
   boxes,
   blockoutDataUrl,
+  cropAspect,
+  roomSize,
+  onBoxesChange,
+  onRoomSizeChange,
   layoutLock,
   versions,
   currentIndex,
@@ -145,11 +155,30 @@ export default function RoomResult({
         </figure>
       </div>
 
+      {cropDataUrl && (
+        <section className="space-y-2">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <span className="eyebrow">Adjust the 3D layout, then re-render</span>
+            <span className="text-xs text-neutral-500">
+              Click a piece to move, resize, rotate, relabel or delete it; add furniture, doors and
+              windows; set the room size. Regenerate renders the layout you leave here.
+            </span>
+          </div>
+          <LayoutEditor3D
+            boxes={boxes}
+            cropAspect={cropAspect}
+            roomSize={roomSize}
+            onChange={onBoxesChange}
+            onRoomSizeChange={onRoomSizeChange}
+          />
+        </section>
+      )}
+
       {error && <p className="text-sm text-red-400">{error}</p>}
 
       <div className="flex flex-wrap items-center gap-3">
         <button type="button" onClick={onRegenerate} disabled={loading} className="btn-primary">
-          {loading ? "Regenerating…" : "Regenerate"}
+          {loading ? "Regenerating…" : "Re-render with this layout"}
         </button>
 
         <button type="button" onClick={onEditPrompt} disabled={loading} className="btn-outline">
