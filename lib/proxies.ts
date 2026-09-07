@@ -137,6 +137,14 @@ export function buildFurniture(
       return g;
     }
     case "table": {
+      if (/\bround\b/.test(l) || (isSquare(w, d) && /\b(coffee|side|end)\b/.test(l))) {
+        // Round coffee/side table: a disc top on a pedestal.
+        const r = Math.min(w, d) / 2;
+        g.add(cyl(THREE, main, r, 0.04, 0, h - 0.02, 0, true));
+        g.add(cyl(THREE, mats.clay(lighten(color, -20)), Math.max(0.04, r * 0.12), h - 0.04, 0, (h - 0.04) / 2, 0));
+        g.add(cyl(THREE, mats.clay(lighten(color, -20)), r * 0.45, 0.03, 0, 0.015, 0));
+        return g;
+      }
       if (/\b(nightstand|bedside|counter|kitchen|vanity|cabinet)\b/.test(l)) {
         // Cabinet: a body with a drawer front and a handle.
         g.add(box(THREE, main, w, h, d, 0, h / 2, 0, true));
@@ -157,7 +165,17 @@ export function buildFurniture(
       return g;
     }
     case "seating": {
-      if (/\b(stool|bench|ottoman)\b/.test(l)) {
+      if (/\b(ottoman|pouf|pouffe)\b/.test(l) || (/\bstool\b/.test(l) && isSquare(w, d))) {
+        // Upholstered ottoman/pouf: a soft cylinder with a slightly wider
+        // cushion on top and a plinth — not a crate.
+        const r = Math.min(w, d) / 2;
+        const hh = Math.min(h, 0.45);
+        g.add(cyl(THREE, mats.clay(lighten(color, -18)), r * 0.9, 0.05, 0, 0.025, 0));
+        g.add(cyl(THREE, main, r * 0.96, hh - 0.15, 0, 0.05 + (hh - 0.15) / 2, 0, true));
+        g.add(cyl(THREE, mats.clay(lighten(color, 14)), r, 0.1, 0, hh - 0.05, 0, true));
+        return g;
+      }
+      if (/\b(stool|bench)\b/.test(l)) {
         g.add(box(THREE, main, w, h, d, 0, h / 2, 0, true));
         return g;
       }
@@ -214,10 +232,58 @@ export function buildFurniture(
     case "rug":
       g.add(box(THREE, main, w, 0.02, d, 0, 0.01, 0, true));
       return g;
-    default:
+    default: {
+      if (/\b(plant|tree|planter)\b/.test(l)) {
+        // Potted plant: a pot and a leafy canopy — a 1.4m box read as a crate.
+        const r = Math.min(w, d) / 2;
+        const potH = 0.35;
+        g.add(cyl(THREE, mats.clay(0x8f7b66), r * 0.55, potH, 0, potH / 2, 0, true));
+        const canopy = new THREE.Mesh(
+          new THREE.IcosahedronGeometry(Math.max(0.25, r * 0.95), 1),
+          mats.clay(0x5f7a4f),
+        );
+        canopy.position.set(0, potH + Math.max(0.25, r * 0.95) * 0.9, 0);
+        canopy.scale.set(1, 1.25, 1);
+        canopy.castShadow = true;
+        canopy.receiveShadow = true;
+        g.add(canopy);
+        return g;
+      }
+      if (/\b(lamp)\b/.test(l)) {
+        // Floor lamp: base, thin pole, conical shade.
+        g.add(cyl(THREE, mats.clay(PROXY_COLORS.handle), 0.15, 0.03, 0, 0.015, 0));
+        g.add(cyl(THREE, mats.clay(PROXY_COLORS.handle), 0.015, h - 0.4, 0, (h - 0.4) / 2 + 0.03, 0));
+        const shade = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.17, 0.22, 0.32, 24, 1, true),
+          mats.clay(PROXY_COLORS.pillow),
+        );
+        shade.position.set(0, h - 0.2, 0);
+        shade.castShadow = true;
+        g.add(shade);
+        return g;
+      }
       g.add(box(THREE, main, w, h, d, 0, h / 2, 0, true));
       return g;
+    }
   }
+}
+
+/** A cylinder mesh (radius r, height h) centred at (x, y, z). */
+function cyl(THREE: ThreeNS, mat: Material, r: number, h: number, x: number, y: number, z: number, outline = false): Mesh {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(Math.max(0.01, r), Math.max(0.01, r), Math.max(0.005, h), 28), mat);
+  m.position.set(x, y, z);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  // EdgesGeometry on a cylinder draws every facet; keep only the top/bottom rims.
+  m.userData.outline = outline;
+  m.userData.roundOutline = outline;
+  return m;
+}
+
+/** Roughly square footprint, so a stool/table is more likely round than a bench. */
+function isSquare(w: number, d: number): boolean {
+  const a = Math.max(w, d) / Math.max(0.01, Math.min(w, d));
+  return a < 1.3;
 }
 
 /** Nudge a packed RGB colour lighter (positive) or darker (negative). */

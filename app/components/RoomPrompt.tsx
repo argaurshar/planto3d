@@ -17,6 +17,8 @@ interface Props {
   stage: "idle" | "writing" | "rendering";
   error: string | null;
   onPromptChange: (value: string) => void;
+  /** The user corrected the detected boxes on the crop. */
+  onBoxesChange: (boxes: SpatialBox[]) => void;
   onRender: () => void;
   onRewrite: () => void;
   onBack: () => void;
@@ -36,6 +38,7 @@ export default function RoomPrompt({
   stage,
   error,
   onPromptChange,
+  onBoxesChange,
   onRender,
   onRewrite,
   onBack,
@@ -47,16 +50,21 @@ export default function RoomPrompt({
     <div className="card space-y-4 p-4">
       <div className="grid gap-6 md:grid-cols-[1fr_2fr]">
         <figure className="space-y-2">
-          <figcaption className="eyebrow">Selected room {boxes.length > 0 && "· what was detected"}</figcaption>
+          <figcaption className="eyebrow">Selected room {boxes.length > 0 && "· what was detected (editable)"}</figcaption>
           {cropDataUrl && (
             <div className="media-frame bg-white">
-              <DetectionOverlay cropDataUrl={cropDataUrl} boxes={boxes} />
+              <DetectionOverlay
+                cropDataUrl={cropDataUrl}
+                boxes={boxes}
+                onChange={writing ? undefined : onBoxesChange}
+              />
             </div>
           )}
           {boxes.length > 0 && (
             <p className="text-xs text-neutral-500">
-              Amber = furniture, blue = window/door, green = where the camera stands. If a box is
-              wrong here, the render will be wrong too — redraw the room more tightly or Rewrite.
+              Amber = furniture, blue = window/door, green = where the camera stands. Fix anything
+              wrong here before rendering — move, resize, relabel or delete a box, or add a missing
+              one; the layout lock rebuilds at once, at no cost.
             </p>
           )}
           {!writing && (

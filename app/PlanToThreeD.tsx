@@ -10,7 +10,7 @@ import RoomPrompt from "./components/RoomPrompt";
 import RoomResult from "./components/RoomResult";
 import { requestOverview, requestRoomPrompt, requestRoomRender } from "@/lib/api";
 import { buildBlockoutMaps } from "@/lib/blockout";
-import { summarizeLabels, describeLayout, isHelperLabel, type SpatialBox } from "@/lib/spatial";
+import { summarizeLabels, describeLayout, isHelperLabel, type RoomSize, type SpatialBox } from "@/lib/spatial";
 import { cropToDataUrl, type Rect } from "@/lib/crop";
 import { DEFAULT_BRIEF } from "@/lib/styles";
 import type { DesignBrief, LayoutVerification, RenderEngine, RoomType } from "@/lib/types";
@@ -52,8 +52,10 @@ interface State {
   layoutLock: LayoutLock;
   /** Detected-layout description used to verify renders (from describeLayout). */
   layoutText: string;
-  /** The detected boxes themselves, drawn over the crop so the lock is inspectable. */
+  /** The detected boxes themselves, drawn over the crop so the lock is inspectable (and editable). */
   boxes: SpatialBox[];
+  /** Real room size read from the plan, kept so an edited layout rebuilds at true scale. */
+  roomSize: RoomSize | null;
   roomType: RoomType;
   /** Per-room style override (defaults to the brief's style). */
   roomStyleId: string;
@@ -90,7 +92,11 @@ type Action =
       lock: LayoutLock;
       layout: string;
       boxes: SpatialBox[];
+      roomSize: RoomSize | null;
     }
+  /** The user edited the boxes: show them at once, the rebuild follows. */
+  | { type: "SET_BOXES"; boxes: SpatialBox[] }
+  | { type: "LAYOUT_REBUILT"; blockout: string | null; depth: string | null; lock: LayoutLock; layout: string }
   | { type: "REWRITE" }
   | { type: "EDIT_PROMPT"; value: string }
   | { type: "RENDER_START" }
@@ -113,6 +119,7 @@ const FRESH_ROOM = {
   layoutLock: { status: "none", count: 0, summary: "" },
   layoutText: "",
   boxes: [],
+  roomSize: null,
   roomPrompt: "",
   roomVersions: [],
   currentVersion: 0,
@@ -183,6 +190,17 @@ function reducer(state: State, action: Action): State {
         layoutLock: action.lock,
         layoutText: action.layout,
         boxes: action.boxes,
+        roomSize: action.roomSize,
+      };
+    case "SET_BOXES":
+      return { ...state, boxes: action.boxes };
+    case "LAYOUT_REBUILT":
+      return {
+        ...state,
+        blockoutDataUrl: action.blockout,
+        depthDataUrl: action.depth,
+        layoutLock: action.lock,
+        layoutText: action.layout,
       };
     case "REWRITE":
       return { ...state, stage: "writing", error: null };
@@ -262,6 +280,38 @@ export default function PlanToThreeD() {
     }
   }
 
+  // The clay massing + depth map + layout text for a set of boxes. Pure
+  // client-side work, so an edited layout rebuilds for free.
+  async function buildLayout(boxes: SpatialBox[], roomSize: RoomSize | null) {
+    // Best-effort: a null blockout (no boxes / no WebGL) falls back to text-to-image.
+    let blockout: string | null = null;
+    let depth: string | null = null;
+    try {
+      const maps = await buildBlockoutMaps(boxes, state.cropAspect, { roomSize });
+      blockout = maps?.clay ?? null;
+      depth = maps?.depth ?? null;
+    } catch {
+      blockout = null;
+    }
+    const lock: LayoutLock = {
+      count: boxes.filter((b) => !isHelperLabel(b.label)).length,
+      status: boxes.length === 0 ? "no-objects" : blockout ? "locked" : "no-webgl",
+      summary: summarizeLabels(boxes),
+    };
+    return { blockout, depth, lock, layout: describeLayout(boxes) };
+  }
+
+  // The user corrected the detection on the crop: rebuild the lock from the
+  // edited boxes without another detection call.
+  const rebuildId = useRef(0);
+  async function editBoxes(boxes: SpatialBox[]) {
+    dispatch({ type: "SET_BOXES", boxes });
+    const id = (rebuildId.current += 1);
+    const built = await buildLayout(boxes, state.roomSize);
+    if (rebuildId.current !== id) return;
+    dispatch({ type: "LAYOUT_REBUILT", ...built });
+  }
+
   // Write (or rewrite) the interior prompt for the current crop, and build the
   // eye-level 3D blockout from the detected boxes so the render can lock layout.
   async function writePrompt(crop: string, id: number) {
@@ -273,26 +323,12 @@ export default function PlanToThreeD() {
         state.overviewDataUrl ?? undefined,
       );
       if (isStale(id)) return;
-      // Best-effort: a null blockout (no boxes / no WebGL) falls back to text-to-image.
-      let blockout: string | null = null;
-      let depth: string | null = null;
-      try {
-        const maps = await buildBlockoutMaps(boxes, state.cropAspect, { roomSize });
-        blockout = maps?.clay ?? null;
-        depth = maps?.depth ?? null;
-      } catch {
-        blockout = null;
-      }
+      const { blockout, depth, lock, layout } = await buildLayout(boxes, roomSize);
       if (isStale(id)) return;
-      const lock: LayoutLock = {
-        count: boxes.filter((b) => !isHelperLabel(b.label)).length,
-        status: boxes.length === 0 ? "no-objects" : blockout ? "locked" : "no-webgl",
-        summary: summarizeLabels(boxes),
-      };
       if (typeof console !== "undefined") {
         console.debug("[voxa] layout lock:", lock.status, "boxes:", boxes.length, "blockout:", Boolean(blockout));
       }
-      dispatch({ type: "PROMPT_DONE", prompt, blockout, depth, lock, layout: describeLayout(boxes), boxes });
+      dispatch({ type: "PROMPT_DONE", prompt, blockout, depth, lock, layout, boxes, roomSize });
     } catch (err) {
       if (isStale(id)) return;
       // Leave the box editable so the user can still write a prompt by hand.
@@ -304,6 +340,7 @@ export default function PlanToThreeD() {
         lock: { status: "none", count: 0, summary: "" },
         layout: "",
         boxes: [],
+        roomSize: null,
       });
       dispatch({ type: "ERROR", message: message(err) });
     }
@@ -447,6 +484,7 @@ export default function PlanToThreeD() {
           stage={state.stage}
           error={state.error}
           onPromptChange={(value) => dispatch({ type: "EDIT_PROMPT", value })}
+          onBoxesChange={editBoxes}
           onRender={renderRoom}
           onRewrite={rewritePrompt}
           onBack={pickAnother}
