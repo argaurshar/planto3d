@@ -1,8 +1,17 @@
-import type { DesignBrief, GenerateImageResponse, RenderEngine, RoomPromptResponse, RoomType } from "./types";
+import type {
+  DesignBrief,
+  GenerateImageResponse,
+  HouseResponse,
+  RenderEngine,
+  RoomPromptResponse,
+  RoomType,
+} from "./types";
 import type { SpatialBox, RoomSize } from "./spatial";
+import type { RawHouse } from "./house";
 import { overviewPrompt } from "./prompts";
 import { renderWithEngine, type EngineTransport } from "./renderEngine";
 import {
+  detectHouseBrowser,
   generateImageBrowser,
   generateKontextImageBrowser,
   generateReferenceImageBrowser,
@@ -62,30 +71,59 @@ async function postJson<T>(url: string, body: Record<string, unknown>): Promise<
   return (await res.json()) as T;
 }
 
-/** Stage 1: generate the whole-plan axonometric overview. Returns an image URL. */
+/**
+ * Stage 0: read the whole plan into one model (rooms, openings, furniture in
+ * one frame). The caller finalizes it with the plan's pixel aspect.
+ */
+export async function requestHouse(planDataUrl: string): Promise<RawHouse> {
+  if (IS_STATIC) return detectHouseBrowser(planDataUrl, requireKey());
+  const data = await postJson<HouseResponse>("/api/house", { plan: planDataUrl });
+  return data.house;
+}
+
+/**
+ * Stage 1: generate the whole-plan axonometric overview. With `massingDataUrl`
+ * (our own axonometric clay render of the house) the overview is the styled
+ * version of that exact view. Returns an image URL.
+ */
 export async function requestOverview(
   planDataUrl: string,
   brief: DesignBrief,
+  massingDataUrl?: string,
 ): Promise<string> {
   if (IS_STATIC) {
-    return generateImageBrowser(overviewPrompt(brief), [planDataUrl], requireKey(), "plan.png");
+    return generateImageBrowser(
+      overviewPrompt(brief, Boolean(massingDataUrl)),
+      massingDataUrl ? [planDataUrl, massingDataUrl] : [planDataUrl],
+      requireKey(),
+      "plan.png",
+    );
   }
   const data = await postJson<GenerateImageResponse>("/api/overview", {
     plan: planDataUrl,
     brief,
+    massing: massingDataUrl,
   });
   return data.image;
+}
+
+/** A layout already known from the whole-house model: the writer skips detection. */
+export interface KnownLayout {
+  boxes: SpatialBox[];
+  roomSize: RoomSize | null;
 }
 
 /**
  * Stage 3a: auto-write the interior prompt for a cropped room. The overview URL
  * (if available) is always passed so the LLM keeps whole-home style consistency.
+ * With `known`, detection and the dimension read are skipped.
  */
 export async function requestRoomPrompt(
   roomDataUrl: string,
   brief: DesignBrief,
   roomType: RoomType,
   overviewUrl?: string,
+  known?: KnownLayout,
 ): Promise<{ prompt: string; boxes: SpatialBox[]; roomSize: RoomSize | null }> {
   if (IS_STATIC) {
     return writeRoomPromptBrowser({
@@ -94,6 +132,8 @@ export async function requestRoomPrompt(
       roomType,
       apiKey: requireKey(),
       overviewUrl,
+      boxes: known?.boxes,
+      roomSize: known?.roomSize,
     });
   }
   const data = await postJson<RoomPromptResponse>("/api/room", {
@@ -102,6 +142,8 @@ export async function requestRoomPrompt(
     brief,
     roomType,
     reference: overviewUrl,
+    boxes: known?.boxes,
+    roomSize: known?.roomSize ?? undefined,
   });
   return { prompt: data.prompt, boxes: data.boxes ?? [], roomSize: data.roomSize ?? null };
 }

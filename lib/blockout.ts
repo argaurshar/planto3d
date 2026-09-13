@@ -34,14 +34,14 @@ import {
   type WallSpec,
 } from "./proxies";
 
-const WALL_H = 2.7; // ceiling height (m)
+export const WALL_H = 2.7; // ceiling height (m)
 const ROOM_MAX = 6; // longest floor dimension (m)
 const EYE_H = 1.5; // camera height (m)
 // How far outside its wall the eye sits. Standing inside a small room puts the
 // viewer on top of the furniture; backing out gives normal interior framing.
 // The floor, ceiling and flanking walls are extended by the same amount so the
 // view stays bounded by real surfaces instead of leaking to the background.
-const VIEW_OUT = 1.8;
+export const VIEW_OUT = 1.8;
 
 // Palette: a MATTE CLAY MASSING MODEL, not a neon segmentation map.
 //
@@ -52,7 +52,7 @@ const VIEW_OUT = 1.8;
 // is a plausible real interior material, kept distinct enough in hue AND value
 // to still identify the object type. Colour carry-over is now harmless — the
 // blockout already looks like a sane room.
-const COLORS = {
+export const COLORS = {
   floor: 0xa8a094, // mid warm grey stone — every piece must read against it
   wall: 0xeceae5, // soft warm white
   window: 0xdaeefc, // daylight (kept bright; it should read as light)
@@ -69,7 +69,7 @@ const COLORS = {
  * vanished against the off-white walls and greige floor, and with no
  * structure left to preserve Kontext re-imagined the whole layout.
  */
-const CATEGORY_COLOR: Record<FurnitureCategory, number> = {
+export const CATEGORY_COLOR: Record<FurnitureCategory, number> = {
   bed: 0xc8b48e, // oat linen
   seating: 0x6e7f70, // deep sage upholstery
   storage: 0x5e4632, // dark walnut
@@ -113,7 +113,7 @@ function footprint(aspect: number, roomSize?: RoomSize | null): { roomW: number;
  * blockout, the prompt writer and the verifier always share one viewpoint
  * (door preferred, clamped away from corners, never inside furniture).
  */
-function cameraPlacement(
+export function cameraPlacement(
   spot: CameraSpot,
   roomW: number,
   roomD: number,

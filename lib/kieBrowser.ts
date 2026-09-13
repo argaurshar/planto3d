@@ -24,6 +24,7 @@ import {
   describeLayout,
 } from "./spatial";
 import type { SpatialBox, RoomSize } from "./spatial";
+import { HOUSE_EXTRACTION_PROMPT, HOUSE_RETRY_PROMPT, parseHouseReply, type RawHouse } from "./house";
 import type { DesignBrief, RoomType } from "./types";
 import {
   POLL_INTERVAL_MS,
@@ -394,8 +395,39 @@ async function detectLayoutBrowser(
 }
 
 /**
+ * Whole-plan pass (Stage 0) in the browser: every room, opening and
+ * furniture item of the full plan in one frame (lib/house.ts). One retry
+ * when the first pass returns nothing room-shaped; throws when the plan
+ * can't be read at all.
+ */
+export async function detectHouseBrowser(planDataUrl: string, apiKey: string): Promise<RawHouse> {
+  const imageUrl = await uploadBase64(planDataUrl, apiKey, "plan.png");
+  const ask = (system: string) =>
+    chatComplete(
+      system,
+      [
+        { type: "text", text: "Read this floor plan: every room, door, window and furniture item." },
+        { type: "image_url", image_url: { url: imageUrl } },
+      ],
+      apiKey,
+      detectModel(),
+    );
+  let house = parseHouseReply(await ask(HOUSE_EXTRACTION_PROMPT));
+  if (!house || house.rooms.length < 2) {
+    const retry = parseHouseReply(await ask(HOUSE_RETRY_PROMPT).catch(() => ""));
+    if (retry && retry.rooms.length > (house?.rooms.length ?? 0)) house = retry;
+  }
+  if (!house) throw new Error("Couldn't read any rooms off this plan.");
+  if (typeof console !== "undefined") {
+    console.debug("[voxa] house:", house.rooms.length, "rooms,", house.openings.length, "openings,", house.furniture.length, "items");
+  }
+  return house;
+}
+
+/**
  * Stage 3a in the browser: write an interior prompt from a room crop, plus the
- * detected boxes (for the eye-level blockout).
+ * detected boxes (for the eye-level blockout). With `boxes` already known
+ * (whole-house model) detection and the dimension read are skipped.
  */
 export async function writeRoomPromptBrowser(args: {
   cropDataUrl: string;
@@ -404,13 +436,19 @@ export async function writeRoomPromptBrowser(args: {
   apiKey: string;
   /** Optional hosted overview URL for whole-home style consistency. */
   overviewUrl?: string;
+  /** Known layout of the room (whole-house model): skips detection. */
+  boxes?: SpatialBox[];
+  roomSize?: RoomSize | null;
 }): Promise<{ prompt: string; boxes: SpatialBox[]; roomSize: RoomSize | null }> {
   const imageUrl = await uploadBase64(args.cropDataUrl, args.apiKey, "room.png");
-  // Detection and the dimension read are independent — run them concurrently.
-  const [{ layout, boxes }, roomSize] = await Promise.all([
-    detectLayoutBrowser(imageUrl, args.apiKey),
-    detectRoomSizeBrowser(imageUrl, args.apiKey),
-  ]);
+  // Detection and the dimension read are independent — run them concurrently,
+  // unless the layout is already known from the whole-house model.
+  const [{ layout, boxes }, roomSize] = args.boxes
+    ? [{ layout: describeLayout(args.boxes), boxes: args.boxes }, args.roomSize ?? null]
+    : await Promise.all([
+        detectLayoutBrowser(imageUrl, args.apiKey),
+        detectRoomSizeBrowser(imageUrl, args.apiKey),
+      ]);
   const hasOverview = Boolean(args.overviewUrl);
 
   const userContent: ChatContent[] = [

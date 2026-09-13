@@ -16,6 +16,8 @@ interface Props {
   blockoutDataUrl: string | null;
   /** Whether the render is geometry-locked to the blockout, and why not if not. */
   layoutLock: LayoutLock;
+  /** True when the boxes came from the whole-house model rather than a per-crop detection. */
+  knownLayout?: boolean;
   prompt: string;
   /** "writing" while the LLM drafts the prompt; "rendering" during the image. */
   stage: "idle" | "writing" | "rendering";
@@ -41,6 +43,7 @@ export default function RoomPrompt({
   roomSize,
   blockoutDataUrl,
   layoutLock,
+  knownLayout = false,
   prompt,
   stage,
   error,
@@ -58,7 +61,9 @@ export default function RoomPrompt({
     <div className="card space-y-4 p-4">
       <div className="grid gap-6 md:grid-cols-[1fr_2fr]">
         <figure className="space-y-2">
-          <figcaption className="eyebrow">Selected room {boxes.length > 0 && "· what was detected (editable)"}</figcaption>
+          <figcaption className="eyebrow">
+            Selected room {boxes.length > 0 && (knownLayout ? "· layout from the house model (editable)" : "· what was detected (editable)")}
+          </figcaption>
           {cropDataUrl && (
             <div className="media-frame bg-white">
               <DetectionOverlay
@@ -85,7 +90,9 @@ export default function RoomPrompt({
                     preserves the viewpoint and layout shown in the 3D editor below.
                   </p>
                   {layoutLock.summary && (
-                    <p className="text-xs text-neutral-400">Detected: {layoutLock.summary}.</p>
+                    <p className="text-xs text-neutral-400">
+                      {knownLayout ? "From the house model" : "Detected"}: {layoutLock.summary}.
+                    </p>
                   )}
                 </>
               ) : (

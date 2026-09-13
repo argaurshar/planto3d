@@ -11,6 +11,7 @@ import {
   describeLayout,
 } from "./spatial";
 import type { SpatialBox, RoomSize } from "./spatial";
+import { HOUSE_EXTRACTION_PROMPT, HOUSE_RETRY_PROMPT, parseHouseReply, type RawHouse } from "./house";
 import type { DesignBrief, RoomType } from "./types";
 
 /**
@@ -139,9 +140,41 @@ async function detectLayout(
 }
 
 /**
+ * Whole-plan pass (Stage 0): every room, opening and furniture item of the
+ * full plan in one coordinate frame (lib/house.ts). One retry with a more
+ * forceful instruction when the first pass returns nothing room-shaped.
+ * Throws a KieError when the plan can't be read at all, so the client can
+ * fall back to the crop-based flow.
+ */
+export async function detectHouse(planDataUrl: string): Promise<RawHouse> {
+  const key = requireApiKey();
+  const imageUrl = await uploadBase64(planDataUrl, "plan.png");
+  const ask = (system: string) =>
+    chatComplete(
+      system,
+      [
+        { type: "text", text: "Read this floor plan: every room, door, window and furniture item." },
+        { type: "image_url", image_url: { url: imageUrl } },
+      ],
+      key,
+      DETECT_MODEL,
+    );
+  let house = parseHouseReply(await ask(HOUSE_EXTRACTION_PROMPT));
+  if (!house || house.rooms.length < 2) {
+    const retry = parseHouseReply(await ask(HOUSE_RETRY_PROMPT).catch(() => ""));
+    if (retry && retry.rooms.length > (house?.rooms.length ?? 0)) house = retry;
+  }
+  if (!house) throw new KieError("Couldn't read any rooms off this plan.", 422);
+  return house;
+}
+
+/**
  * Write a photorealistic interior prompt for the given room crop, plus the
  * detected spatial boxes (used by the client to build the eye-level blockout).
  * `cropDataUrl` is a base64 data URL (uploaded to get a hosted URL first).
+ * When the caller already knows the layout (`boxes` from the whole-house
+ * model), detection and the dimension read are skipped and those boxes are
+ * returned unchanged.
  */
 export async function writeRoomPrompt(args: {
   cropDataUrl: string;
@@ -151,17 +184,23 @@ export async function writeRoomPrompt(args: {
   overviewUrl?: string;
   /** Skip the paid dimension read when the caller won't use `roomSize`. */
   needRoomSize?: boolean;
+  /** Known layout of the room (whole-house model): skips detection. */
+  boxes?: SpatialBox[];
+  roomSize?: RoomSize | null;
 }): Promise<{ prompt: string; boxes: SpatialBox[]; roomSize: RoomSize | null }> {
   const key = requireApiKey();
   const imageUrl = await uploadBase64(args.cropDataUrl, "room.png");
 
   // Stage 3a.0: ground the prompt in a detected layout of the crop, and read the
   // plan's printed dimensions so the blockout is built at the real room scale.
-  // Both are best-effort and independent, so run them concurrently.
-  const [{ layout, boxes }, roomSize] = await Promise.all([
-    detectLayout(imageUrl, key),
-    args.needRoomSize === false ? Promise.resolve(null) : detectRoomSize(imageUrl, key),
-  ]);
+  // Both are best-effort and independent, so run them concurrently — unless
+  // the layout is already known from the whole-house model.
+  const [{ layout, boxes }, roomSize] = args.boxes
+    ? [{ layout: describeLayout(args.boxes), boxes: args.boxes }, args.roomSize ?? null]
+    : await Promise.all([
+        detectLayout(imageUrl, key),
+        args.needRoomSize === false ? Promise.resolve(null) : detectRoomSize(imageUrl, key),
+      ]);
   const hasOverview = Boolean(args.overviewUrl);
   const system = promptWriterSystem(args.brief, args.roomType, hasOverview, Boolean(layout));
 

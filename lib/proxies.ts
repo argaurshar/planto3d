@@ -329,6 +329,12 @@ export interface WallSpec {
   outward: 1 | -1;
   openings: WallOpening[];
   wallH: number;
+  /**
+   * A house wall seen from BOTH sides: its thickness is centred on `at` and
+   * skirting, frames and window boards are drawn on both faces. (A room's
+   * shell wall sits outside the room with its trims on the inside only.)
+   */
+  centered?: boolean;
 }
 
 /**
@@ -347,8 +353,14 @@ export function buildWall(THREE: ThreeNS, mats: ProxyMaterials, spec: WallSpec, 
   const H = spec.wallH;
   // Centre of the wall's thickness (just outside the room) and of the inner
   // face (skirting, frames) on the perpendicular axis.
-  const mid = spec.at + (spec.outward * T) / 2;
-  const inner = spec.at - spec.outward * 0.001;
+  const mid = spec.centered ? spec.at : spec.at + (spec.outward * T) / 2;
+  // Faces that get trims: the room side only, or both sides of a house wall.
+  const faces: Array<1 | -1> = spec.centered ? [1, -1] : [spec.outward];
+  // Frames sit slightly proud of each trimmed face.
+  const frameP = spec.centered ? mid : spec.at - spec.outward * 0.01;
+  const frameT = spec.centered ? T + 0.04 : T + 0.02;
+  // Where a face's inside surface is, on the perpendicular axis.
+  const faceAt = (f: 1 | -1) => (spec.centered ? mid - f * (T / 2) : spec.at);
 
   const place = (m: Mesh, a: number, y: number, p: number) => {
     if (along) m.position.set(a, y, p);
@@ -374,8 +386,9 @@ export function buildWall(THREE: ThreeNS, mats: ProxyMaterials, spec: WallSpec, 
     if (boxIndex !== undefined) m.userData.boxIndex = boxIndex;
     g.add(place(m, (s + e) / 2, (y0 + y1) / 2, p));
   };
-  const skirt = (s: number, e: number) =>
-    piece(skirtMat, s, e, 0, SKIRT_H, spec.at - spec.outward * (SKIRT_T / 2), SKIRT_T);
+  const skirt = (s: number, e: number) => {
+    for (const f of faces) piece(skirtMat, s, e, 0, SKIRT_H, faceAt(f) - f * (SKIRT_T / 2), SKIRT_T);
+  };
 
   // Clamp, sort and de-overlap the openings.
   const ops = spec.openings
@@ -390,17 +403,18 @@ export function buildWall(THREE: ThreeNS, mats: ProxyMaterials, spec: WallSpec, 
     skirt(cursor, o.start);
     if (o.kind === "door") {
       piece(wallMat, o.start, o.end, DOOR_H, H); // lintel
-      // Frame: jambs + head, slightly proud of the wall on the room side.
-      const fp = spec.at - spec.outward * 0.01;
-      piece(trimMat, o.start - FRAME_W, o.start, 0, DOOR_H + FRAME_W, fp, T + 0.02);
-      piece(trimMat, o.end, o.end + FRAME_W, 0, DOOR_H + FRAME_W, fp, T + 0.02);
-      piece(trimMat, o.start - FRAME_W, o.end + FRAME_W, DOOR_H, DOOR_H + FRAME_W, fp, T + 0.02);
-      // Closed leaf set into the opening, with a handle.
+      // Frame: jambs + head, slightly proud of the wall on the trimmed side(s).
+      piece(trimMat, o.start - FRAME_W, o.start, 0, DOOR_H + FRAME_W, frameP, frameT);
+      piece(trimMat, o.end, o.end + FRAME_W, 0, DOOR_H + FRAME_W, frameP, frameT);
+      piece(trimMat, o.start - FRAME_W, o.end + FRAME_W, DOOR_H, DOOR_H + FRAME_W, frameP, frameT);
+      // Closed leaf set into the opening, with a handle on each trimmed face.
       piece(mats.clay(PROXY_COLORS.doorLeaf), o.start + 0.02, o.end - 0.02, 0.01, DOOR_H - 0.01, mid, 0.045, true, o.index);
-      const handle = along
-        ? box(THREE, mats.clay(PROXY_COLORS.handle), 0.12, 0.02, 0.02, 0, 0, 0)
-        : box(THREE, mats.clay(PROXY_COLORS.handle), 0.02, 0.02, 0.12, 0, 0, 0);
-      g.add(place(handle, o.end - 0.12, 1.0, spec.at - spec.outward * 0.04));
+      for (const f of faces) {
+        const handle = along
+          ? box(THREE, mats.clay(PROXY_COLORS.handle), 0.12, 0.02, 0.02, 0, 0, 0)
+          : box(THREE, mats.clay(PROXY_COLORS.handle), 0.02, 0.02, 0.12, 0, 0, 0);
+        g.add(place(handle, o.end - 0.12, 1.0, spec.centered ? mid - f * 0.04 : spec.at - spec.outward * 0.04));
+      }
     } else {
       piece(wallMat, o.start, o.end, WINDOW_HEAD, H); // lintel
       piece(wallMat, o.start, o.end, 0, WINDOW_SILL); // under the sill
@@ -411,17 +425,17 @@ export function buildWall(THREE: ThreeNS, mats: ProxyMaterials, spec: WallSpec, 
       const midY = (WINDOW_SILL + WINDOW_HEAD) / 2;
       piece(mats.clay(PROXY_COLORS.mullion), midA - 0.02, midA + 0.02, WINDOW_SILL, WINDOW_HEAD, mid, 0.05);
       piece(mats.clay(PROXY_COLORS.mullion), o.start, o.end, midY - 0.02, midY + 0.02, mid, 0.05);
-      // Frame + a board that projects into the room.
-      const fp = spec.at - spec.outward * 0.01;
-      piece(trimMat, o.start - FRAME_W, o.start, WINDOW_SILL - FRAME_W, WINDOW_HEAD + FRAME_W, fp, T + 0.02);
-      piece(trimMat, o.end, o.end + FRAME_W, WINDOW_SILL - FRAME_W, WINDOW_HEAD + FRAME_W, fp, T + 0.02);
-      piece(trimMat, o.start - FRAME_W, o.end + FRAME_W, WINDOW_HEAD, WINDOW_HEAD + FRAME_W, fp, T + 0.02);
-      piece(trimMat, o.start - FRAME_W - 0.02, o.end + FRAME_W + 0.02, WINDOW_SILL - 0.04, WINDOW_SILL, spec.at - spec.outward * 0.05, 0.12);
+      // Frame + a board that projects into the room (both rooms for a house wall).
+      piece(trimMat, o.start - FRAME_W, o.start, WINDOW_SILL - FRAME_W, WINDOW_HEAD + FRAME_W, frameP, frameT);
+      piece(trimMat, o.end, o.end + FRAME_W, WINDOW_SILL - FRAME_W, WINDOW_HEAD + FRAME_W, frameP, frameT);
+      piece(trimMat, o.start - FRAME_W, o.end + FRAME_W, WINDOW_HEAD, WINDOW_HEAD + FRAME_W, frameP, frameT);
+      for (const f of faces) {
+        piece(trimMat, o.start - FRAME_W - 0.02, o.end + FRAME_W + 0.02, WINDOW_SILL - 0.04, WINDOW_SILL, faceAt(f) - f * 0.05, 0.12);
+      }
     }
     cursor = o.end;
   }
   piece(wallMat, cursor, spec.a1, 0, H);
   skirt(cursor, spec.a1);
-  void inner;
   return g;
 }
