@@ -23,26 +23,60 @@ massing + depth map that locks the render's layout.
 
 This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
 `useReducer` state machine with steps
-`upload → overview → select → roomPrompt → room`):
+`upload → house → (select) → roomSetup → roomPrompt → room`):
 
 1. **Upload** a 2D plan image (`components/PlanUploader.tsx`).
 2. **Design brief** — pick a style preset, lighting, and optional plan metadata
    (`components/DesignBrief.tsx`); threaded into every prompt.
-3. **Generate overview** — POST `{ plan, brief }` to `/api/overview`; Nano
-   Banana 2 returns an **axonometric** top-view of the whole plan
-   (`components/OverviewView.tsx`). **Approve** to continue.
-4. **Draw a box** around a room **on the 2D plan** (`components/RoomSelector.tsx`;
-   the generated 3D overview is shown beside it as a *reference only*). The
-   plan is the geometric source of truth: it is exact and top-down, so crop
-   coordinates are floor coordinates — which is what detection and the blockout
-   assume. (Cropping from the axonometric overview was the old behaviour and
-   compounded error: the overview is itself an AI drawing that drifts from the
-   plan, and its image-y mixes height with depth, skewing the blockout.) The
-   selection is captured in **natural image pixels** and cropped client-side
+3. **3D model of the whole home (Stage 0)** — the plan is read ONCE into one
+   model (`lib/house.ts`): POST `{ plan }` to `/api/house` runs a Gemini pass
+   over the FULL plan (`HOUSE_EXTRACTION_PROMPT`) that returns every **room**
+   rectangle (with its printed dimensions), every **door/window** and every
+   **furniture** item in one 0-1000 frame. The client `finalizeHouse`s it:
+   room edges within ~1.4% snap onto shared wall lines, and the plan's
+   **scale** is the median of every printed room dimension (falls back to a
+   typical-room-area guess, flagged "estimated"). `houseWalls` derives the
+   walls from the room boundaries — a wall shared by two rooms is built once,
+   seen from both sides (`buildWall` with `centered`), with its openings
+   attached to the nearest wall line — and `roomLocalBoxes` derives each
+   room's own layout (openings hugging the wall they sit on, furniture inside
+   it; a door between two rooms belongs to both). `lib/houseScene.ts`
+   `assembleHouse` builds the dollhouse in Three.js (floors, merged walls
+   with openings, the same furniture proxies the room render uses) and
+   `renderHouseIso` renders it from an orthographic axonometric camera to a
+   PNG. `components/HouseStep.tsx` shows it live (`components/HouseView.tsx`:
+   orbit, "Axonometric"/"Top view", the plan beside it with the rooms,
+   doors and windows drawn over it; click a room in 3D or on the plan to
+   pick it; the green marker is where the render camera will stand and
+   "Entry view" steps the orbit camera just inside that doorway). Why the
+   whole house first: a room cropped on its own lost its context — the
+   crop's detector had to guess where the walls were from the crop's edges,
+   which door was the entry and how big the room was. The **styled AI
+   overview** is now optional: POST `{ plan, brief, massing }` to
+   `/api/overview`, where `massing` is the house's axonometric clay PNG, so
+   Nano Banana 2 styles OUR view instead of re-drawing the plan
+   (`overviewPrompt(brief, hasMassing)`); a Clay ↔ Styled compare slider shows
+   the two. If the plan can't be read (`houseStatus: "failed"`) the user can
+   retry or fall back to drawing a box.
+4. **Pick a room** — in the house model ("Render <room> →"): the room's
+   rectangle is cropped from the plan (`roomRectPx` in natural pixels), and
+   its `roomLocalBoxes` + `roomSizeOf` go straight into the room flow as a
+   **known layout** (`knownLayout` in state) — no per-room detection, no
+   dimension read; the crop is only the prompt writer's visual context. Or
+   **draw a box** around a room **on the 2D plan** (`components/RoomSelector.tsx`,
+   the "Draw a box instead" fallback, e.g. when detection missed a room):
+   then detection runs on the crop as before. The plan is the geometric
+   source of truth: it is exact and top-down, so crop coordinates are floor
+   coordinates — which is what detection and the blockout assume. (Cropping
+   from the axonometric overview was the old behaviour and compounded error:
+   the overview is itself an AI drawing that drifts from the plan, and its
+   image-y mixes height with depth, skewing the blockout.) The selection is
+   captured in **natural image pixels** and cropped client-side
    (`lib/crop.ts`; remote images go through the CORS proxy `lib/imageProxy.ts`
    so the canvas isn't tainted). Then a per-room
    **setup table** (`components/RoomSetup.tsx`) picks the **interior type +
-   style** (overrides the brief's style for this room only).
+   style** (overrides the brief's style for this room only; the type is
+   preselected from the room's label via `roomTypeFromLabel`).
 5. **Two-stage room render:**
    - **3a — prompt writer** — `/api/room` `action:"write"` calls a kie.ai vision
      LLM (`lib/kieChat.ts`) to auto-write a **photorealistic interior** prompt,
@@ -136,6 +170,9 @@ This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
      The result page shows the whole **evidence chain** — crop + boxes → clay
      massing → render — so a wrong render can be traced to its stage: massing
      ≠ plan means detection is at fault, render ≠ massing means the renderer.
+     The same 3D editor sits on the result page too ("Adjust the 3D layout,
+     then re-render"): edits rebuild the lock in place and **Re-render with
+     this layout** (Regenerate) renders the edited scene.
    - **3b — render** — when a blockout is present, `action:"render"` turns it
      into the photo with the **render engine** chosen in `RoomSetup`
      (`lib/renderEngine.ts`, one transport-agnostic dispatcher used by the
@@ -264,6 +301,11 @@ drops straight into `<img src>`.
   Only furniture at least 1m tall can reject a camera spot; the eye looks
   over rugs and low tables (a rug by the door used to flip the whole view).
   The `auto` action passes `needRoomSize: false` since it never returns it.
+  With `boxes` (+ `roomSize`) in the body — the room's layout from the
+  whole-house model, validated (≤80 boxes, 0-1000 coords) — `write` skips
+  detection and the dimension read and writes the prompt from
+  `describeLayout(boxes)`; "Rewrite with AI" sends the boxes as the user
+  edited them, so the prompt follows the corrected layout.
 - Every generation in a route draws from one budget derived from `maxDuration`
   (`ROUTE_BUDGET_MS`); `renderLocked` skips the fallback/corrective retry when
   under `MIN_RENDER_MS` remains so an already-billed image is returned instead
@@ -299,7 +341,8 @@ app/
     StepBar.tsx         # progress bar shown on every step after upload
     PlanUploader.tsx    # file → data URL (click, drag-and-drop, or paste)
     DesignBrief.tsx     # style preset + lighting + plan metadata
-    OverviewView.tsx    # brief + plan + overview + 2D↔3D CompareSlider + Approve
+    HouseStep.tsx       # Stage 0 page: brief + HouseView + optional styled overview (clay ↔ styled slider)
+    HouseView.tsx       # live Three.js whole-house model (orbit/top/entry view) + plan with rooms; click to pick
     CompareSlider.tsx   # before/after drag slider (2D vs 3D)
     DownloadButton.tsx  # blob-fetch download for remote images
     RoomSelector.tsx    # box drawing over the plan
@@ -309,7 +352,8 @@ app/
     RoomPrompt.tsx      # editable auto-written interior prompt + Render
     RoomResult.tsx      # evidence chain (crop+boxes → clay massing → render) + Regenerate/history
   api/
-    overview/route.ts   # POST { plan, brief }                  → { image, mimeType }
+    house/route.ts      # POST { plan }                         → { house } (rooms/openings/furniture)
+    overview/route.ts   # POST { plan, brief, massing? }        → { image, mimeType }
     room/route.ts        # POST { action, room, brief, prompt… } → { image|prompt }
 lib/
   kie.ts                # server-only kie.ai image client (upload + createTask + poll)
@@ -320,6 +364,9 @@ lib/
                         #   "generate task timeout" grace (120s), timeout messages
   verifyLoop.ts         # render → verify → one corrective retry (shared by route + static)
   renderEngine.ts       # reference / structure / edit engine dispatch (shared by route + static)
+  house.ts              # Stage 0 whole-house model: extraction prompt, parse, snap + scale,
+                        #   houseWalls (merged), roomLocalBoxes/roomSizeOf/roomRectPx
+  houseScene.ts         # assembleHouse (dollhouse: floors, merged walls, proxies) + iso render
   blockout.ts           # assembleScene (shared by render + editor) + clay/depth offscreen render
   proxies.ts            # scene assembly: furniture proxies + walls with openings (Three.js)
   prompts.ts            # overview + prompt-writer system + room render templates
@@ -389,7 +436,13 @@ Without it the UI runs but generation calls return an error surfaced in the UI.
 
 ## Open / future decisions
 
-- **Automatic room detection** (so the user doesn't have to draw boxes).
+- **Room rectangles are axis-aligned boxes**: L-shaped rooms come out as
+  their bounding box. Editing the house model itself (move a wall, split a
+  room) is not yet possible; only the per-room layout is editable.
+- **Render from inside the house model** — the room render still uses the
+  room-only `assembleScene` (door leaves closed, so nothing beyond them
+  shows); the house model is the source of the room's layout, not yet its
+  render context.
 - **Projection default** — currently the prompt allows isometric-ish
   axonometric; pin an exact angle if consistency matters.
 - **Persistence/history** across sessions (currently in-memory React state).

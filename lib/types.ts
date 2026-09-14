@@ -1,6 +1,7 @@
 // Shared types used across client and server.
 
 import type { SpatialBox, RoomSize } from "./spatial";
+import type { RawHouse } from "./house";
 
 /** A base64-encoded image plus its mime type (no data: URL prefix). */
 export interface InlineImage {
@@ -111,6 +112,11 @@ export interface RoomPromptResponse {
    * Omitted when the plan prints no dimensions or they couldn't be read.
    */
   roomSize?: RoomSize | null;
+}
+
+/** Response shape returned by /api/house (Stage 0): the raw whole-plan read. */
+export interface HouseResponse {
+  house: RawHouse;
 }
 
 export interface ApiError {

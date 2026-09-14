@@ -30,19 +30,42 @@ function metaPhrase(brief: DesignBrief): string {
   return parts.length ? ` of a ${parts.join(" ")} home` : "";
 }
 
-/** Stage 1: whole-plan 2D plan -> axonometric overview map of the layout. */
-export function overviewPrompt(brief: DesignBrief): string {
+/**
+ * Stage 1: whole-plan 2D plan -> axonometric overview map of the layout.
+ * With `hasMassing`, a second image is our own clay model of the house from
+ * an axonometric camera (lib/houseScene.ts): the overview is then the styled
+ * version of THAT view, so its rooms, walls and openings can't drift from
+ * the plan.
+ */
+export function overviewPrompt(brief: DesignBrief, hasMassing = false): string {
   const style = resolveStyleDescriptor(brief);
+  const massingLead = hasMassing
+    ? [
+        "Image 1 is a 2D architectural floor plan. Image 2 is a clay massing model",
+        "of exactly that plan seen from above at an angle (every wall, door, window",
+        "and furniture block outlined). Produce the finished, fully styled",
+        `axonometric overview render${metaPhrase(brief)} of image 2: the SAME camera`,
+        "angle and framing, the same rooms, walls, openings and furniture in the",
+        "same places, with every block turned into the real, detailed piece it",
+        "stands for. Do not add, remove or move any wall, room or piece.",
+      ].join(" ")
+    : "";
   return [
-    "This image is a 2D architectural floor plan.",
-    `Using it as a guide for depth and spatial layout, generate a full overhead`,
-    `3D axonometric (isometric) overview render${metaPhrase(brief)}, showing every`,
-    "room and its walls as a single cohesive model viewed from above at an angle.",
+    massingLead || "This image is a 2D architectural floor plan.",
+    hasMassing
+      ? ""
+      : `Using it as a guide for depth and spatial layout, generate a full overhead`,
+    hasMassing
+      ? ""
+      : `3D axonometric (isometric) overview render${metaPhrase(brief)}, showing every`,
+    hasMassing ? "" : "room and its walls as a single cohesive model viewed from above at an angle.",
     AXONOMETRIC_RULES,
     `Lighting: ${brief.lighting}.`,
     `STYLE: ${style}.`,
     "Do not add a background, text labels, dimensions, or annotations.",
-  ].join(" ");
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 /**

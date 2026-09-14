@@ -35,6 +35,16 @@ export function clampRect(rect: Rect, naturalWidth: number, naturalHeight: numbe
   };
 }
 
+/** Natural pixel size of an image (data or remote URL). */
+export async function imageSize(source: string): Promise<{ width: number; height: number }> {
+  const { img, revoke } = await loadImage(source);
+  try {
+    return { width: img.naturalWidth, height: img.naturalHeight };
+  } finally {
+    revoke();
+  }
+}
+
 /**
  * Crop `rect` (in natural pixels) out of a source image and return a PNG data
  * URL. Loads the source from a data URL so it works fully client-side.

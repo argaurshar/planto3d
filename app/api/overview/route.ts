@@ -17,7 +17,7 @@ const ROUTE_BUDGET_MS = maxDuration * 1000 - 20_000;
 const MAX_DATA_URL_CHARS = 10 * 1024 * 1024;
 
 export async function POST(req: Request) {
-  let body: { plan?: string; brief?: DesignBrief };
+  let body: { plan?: string; brief?: DesignBrief; massing?: string };
   try {
     body = await req.json();
   } catch {
@@ -46,11 +46,22 @@ export async function POST(req: Request) {
   }
 
   const brief: DesignBrief = { ...DEFAULT_BRIEF, ...(body.brief ?? {}) };
+  // Optional clay massing of the house (our own axonometric render): when
+  // present the overview is the styled version of it. Dropped if malformed.
+  const massing =
+    typeof body.massing === "string" &&
+    body.massing.length <= MAX_DATA_URL_CHARS &&
+    dataUrlToInline(body.massing)
+      ? body.massing
+      : undefined;
 
   try {
-    const { imageUrl } = await generateImage(overviewPrompt(brief), [plan], "plan.png", {
-      timeoutMs: ROUTE_BUDGET_MS,
-    });
+    const { imageUrl } = await generateImage(
+      overviewPrompt(brief, Boolean(massing)),
+      massing ? [plan, massing] : [plan],
+      "plan.png",
+      { timeoutMs: ROUTE_BUDGET_MS },
+    );
     const payload: GenerateImageResponse = {
       image: imageUrl,
       mimeType: "image/png",

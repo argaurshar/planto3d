@@ -13,6 +13,7 @@ import { dataUrlToInline } from "@/lib/image";
 import { roomRenderPrompt, fallbackRoomPrompt } from "@/lib/prompts";
 import { renderWithEngine, type EngineTransport } from "@/lib/renderEngine";
 import { isAllowedReference } from "@/lib/refs";
+import type { RoomSize, SpatialBox } from "@/lib/spatial";
 import { DEFAULT_BRIEF } from "@/lib/styles";
 import { renderWithVerification } from "@/lib/verifyLoop";
 import {
@@ -58,6 +59,35 @@ interface Body {
   engine?: RenderEngine;
   /** Detected-layout description used to verify the render (plain text). */
   layout?: string;
+  /** Known layout of the room (whole-house model): the writer skips detection. */
+  boxes?: unknown;
+  roomSize?: unknown;
+}
+
+const MAX_BOXES = 80;
+
+/** Validate a client-supplied box list (0-1000 coords, short labels) or return undefined. */
+function readBoxes(raw: unknown): SpatialBox[] | undefined {
+  if (!Array.isArray(raw) || raw.length > MAX_BOXES) return undefined;
+  const out: SpatialBox[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") return undefined;
+    const o = item as { label?: unknown; box_2d?: unknown };
+    if (typeof o.label !== "string" || !o.label.trim() || o.label.length > 60) return undefined;
+    const b = o.box_2d;
+    if (!Array.isArray(b) || b.length !== 4 || !b.every((v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1000)) {
+      return undefined;
+    }
+    out.push({ label: o.label.trim().toLowerCase(), box_2d: [b[0], b[1], b[2], b[3]] });
+  }
+  return out;
+}
+
+function readRoomSize(raw: unknown): RoomSize | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as { width?: unknown; depth?: unknown };
+  const ok = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0.5 && v <= 40;
+  return ok(o.width) && ok(o.depth) ? { width: o.width, depth: o.depth } : null;
 }
 
 function err(message: string, status: number) {
@@ -189,7 +219,15 @@ export async function POST(req: Request) {
       let boxes: RoomPromptResponse["boxes"] = [];
       let roomSize: RoomPromptResponse["roomSize"] = null;
       try {
-        const r = await writeRoomPrompt({ cropDataUrl: room!, brief, roomType, overviewUrl: reference });
+        const known = readBoxes(body.boxes);
+        const r = await writeRoomPrompt({
+          cropDataUrl: room!,
+          brief,
+          roomType,
+          overviewUrl: reference,
+          boxes: known,
+          roomSize: known ? readRoomSize(body.roomSize) : undefined,
+        });
         prompt = r.prompt;
         boxes = r.boxes;
         roomSize = r.roomSize;

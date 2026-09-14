@@ -5,6 +5,8 @@ import { STYLE_PRESETS } from "@/lib/styles";
 
 interface Props {
   cropDataUrl: string | null;
+  /** The room's name from the house model, if it was picked there. */
+  roomLabel?: string | null;
   roomType: RoomType;
   styleId: string;
   engine: RenderEngine;
@@ -22,6 +24,7 @@ interface Props {
  */
 export default function RoomSetup({
   cropDataUrl,
+  roomLabel,
   roomType,
   styleId,
   engine,
@@ -35,7 +38,7 @@ export default function RoomSetup({
     <div className="card space-y-5 p-4">
       <div className="grid gap-6 md:grid-cols-[1fr_2fr]">
         <figure className="space-y-2">
-          <figcaption className="eyebrow">Selected room</figcaption>
+          <figcaption className="eyebrow">Selected room{roomLabel ? ` · ${roomLabel}` : ""}</figcaption>
           {cropDataUrl && (
             <div className="media-frame bg-white">
               {/* eslint-disable-next-line @next/next/no-img-element */}

@@ -99,7 +99,7 @@ export function extractJsonObject(content: string): Record<string, unknown> | nu
 }
 
 /** Parse a dimension value that may be a number, "3.6", or a comma decimal "3,6". */
-function toMetres(raw: unknown): number {
+export function toMetres(raw: unknown): number {
   if (typeof raw === "number") return raw;
   if (typeof raw !== "string") return NaN;
   return Number(raw.trim().replace(/\s*m$/i, "").replace(",", "."));
@@ -153,7 +153,7 @@ function firstArrayProp(obj: Record<string, unknown>): unknown[] | null {
 }
 
 /** Coerce a 4-number box (any common key/scale) to 0-1000 [ymin,xmin,ymax,xmax]. */
-function coerceBox(raw: unknown): [number, number, number, number] | null {
+export function coerceBox(raw: unknown): [number, number, number, number] | null {
   if (!Array.isArray(raw) || raw.length !== 4) return null;
   const n = raw.map(Number);
   if (n.some((v) => !Number.isFinite(v))) return null;
@@ -194,6 +194,15 @@ export function parseSpatialBoxes(content: string): SpatialBox[] {
   }
   if (!Array.isArray(parsed)) return [];
 
+  return coerceBoxList(parsed);
+}
+
+/**
+ * Coerce a parsed JSON array of detections into boxes, tolerating alternate
+ * key names (box/bbox/bounding_box, name/class/type). Items without a usable
+ * label and box are dropped. Shared with the whole-house parser.
+ */
+export function coerceBoxList(parsed: unknown[]): SpatialBox[] {
   const boxes: SpatialBox[] = [];
   for (const item of parsed) {
     if (!item || typeof item !== "object") continue;

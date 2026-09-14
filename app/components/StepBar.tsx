@@ -1,10 +1,10 @@
 "use client";
 
-type Step = "upload" | "overview" | "select" | "roomSetup" | "roomPrompt" | "room";
+type Step = "upload" | "house" | "select" | "roomSetup" | "roomPrompt" | "room";
 
 const STEPS: { key: Step[]; label: string }[] = [
-  { key: ["overview"], label: "3D overview" },
-  { key: ["select", "roomSetup"], label: "Pick a room" },
+  { key: ["house"], label: "3D house model" },
+  { key: ["select", "roomSetup"], label: "Room setup" },
   { key: ["roomPrompt"], label: "Prompt & layout" },
   { key: ["room"], label: "Interior render" },
 ];

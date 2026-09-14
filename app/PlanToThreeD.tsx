@@ -3,19 +3,29 @@
 import { useReducer, useRef } from "react";
 import Hero from "./components/Hero";
 import StepBar from "./components/StepBar";
-import OverviewView from "./components/OverviewView";
+import HouseStep, { type HouseStatus } from "./components/HouseStep";
 import RoomSelector from "./components/RoomSelector";
 import RoomSetup from "./components/RoomSetup";
 import RoomPrompt from "./components/RoomPrompt";
 import RoomResult from "./components/RoomResult";
-import { requestOverview, requestRoomPrompt, requestRoomRender } from "@/lib/api";
+import { requestHouse, requestOverview, requestRoomPrompt, requestRoomRender } from "@/lib/api";
 import { buildBlockoutMaps } from "@/lib/blockout";
+import {
+  finalizeHouse,
+  roomAspectOf,
+  roomLocalBoxes,
+  roomRectPx,
+  roomSizeOf,
+  roomTypeFromLabel,
+  type HouseModel,
+} from "@/lib/house";
+import { renderHouseIso } from "@/lib/houseScene";
 import { summarizeLabels, describeLayout, isHelperLabel, type RoomSize, type SpatialBox } from "@/lib/spatial";
-import { cropToDataUrl, type Rect } from "@/lib/crop";
+import { cropToDataUrl, imageSize, type Rect } from "@/lib/crop";
 import { DEFAULT_BRIEF } from "@/lib/styles";
 import type { DesignBrief, LayoutVerification, RenderEngine, RoomType } from "@/lib/types";
 
-type Step = "upload" | "overview" | "select" | "roomSetup" | "roomPrompt" | "room";
+type Step = "upload" | "house" | "select" | "roomSetup" | "roomPrompt" | "room";
 type Stage = "idle" | "writing" | "rendering";
 
 /** Whether the render is geometry-locked to a blockout, and why not if not. */
@@ -37,11 +47,24 @@ export type RoomVersion = {
 interface State {
   step: Step;
   planDataUrl: string | null;
+  /** Natural pixel size of the plan, for room crops and the house scale. */
+  planSize: { width: number; height: number } | null;
   brief: DesignBrief;
+  /** The whole plan as one model (rooms, walls, openings, furniture) — Stage 0. */
+  house: HouseModel | null;
+  houseStatus: HouseStatus;
+  /** Our own axonometric clay render of the house (the AI overview's reference). */
+  houseMassingDataUrl: string | null;
+  /** Room picked in the house model. */
+  selectedRoom: number | null;
   overviewDataUrl: string | null;
   cropDataUrl: string | null;
   /** Pixel aspect (w/h) of the room crop, used to proportion the 3D blockout. */
   cropAspect: number;
+  /** Label of the room being worked on (from the house model), for headings. */
+  roomLabel: string | null;
+  /** True when `boxes` came from the house model, so the prompt writer skips detection. */
+  knownLayout: boolean;
   /** Eye-level 3D blockout of the room (PNG data URL) used to lock the render. */
   blockoutDataUrl: string | null;
   /** Depth map of the same view, fed to the reference engine alongside the clay. */
@@ -73,16 +96,27 @@ interface State {
 }
 
 type Action =
-  | { type: "SET_PLAN"; dataUrl: string }
+  | { type: "SET_PLAN"; dataUrl: string; size: { width: number; height: number } | null }
   | { type: "SET_BRIEF"; patch: Partial<DesignBrief> }
+  | { type: "HOUSE_START" }
+  | { type: "HOUSE_DONE"; house: HouseModel }
+  | { type: "HOUSE_MASSING"; dataUrl: string | null }
+  | { type: "HOUSE_FAILED"; message: string }
+  | { type: "SELECT_HOUSE_ROOM"; index: number | null }
   | { type: "LOAD_OVERVIEW" }
   | { type: "OVERVIEW_DONE"; dataUrl: string }
-  | { type: "APPROVE" }
-  | { type: "GO_OVERVIEW" }
+  | { type: "GO_SELECT" }
+  | { type: "GO_HOUSE" }
   | { type: "SET_ROOM_TYPE"; value: RoomType }
   | { type: "SET_ROOM_STYLE"; styleId: string }
   | { type: "SET_ENGINE"; engine: RenderEngine }
-  | { type: "BEGIN_SETUP"; dataUrl: string; aspect: number }
+  | {
+      type: "BEGIN_SETUP";
+      dataUrl: string;
+      aspect: number;
+      /** Layout known from the house model (skips detection), else detected per crop. */
+      known?: { boxes: SpatialBox[]; roomSize: RoomSize; label: string; roomType: RoomType };
+    }
   | { type: "START_WRITE" }
   | {
       type: "PROMPT_DONE";
@@ -115,6 +149,8 @@ type Action =
  * and leak the previous room's value into the next.
  */
 const FRESH_ROOM = {
+  roomLabel: null,
+  knownLayout: false,
   blockoutDataUrl: null,
   depthDataUrl: null,
   layoutLock: { status: "none", count: 0, summary: "" },
@@ -130,7 +166,12 @@ const FRESH_ROOM = {
 const initialState: State = {
   step: "upload",
   planDataUrl: null,
+  planSize: null,
   brief: DEFAULT_BRIEF,
+  house: null,
+  houseStatus: "idle",
+  houseMassingDataUrl: null,
+  selectedRoom: null,
   overviewDataUrl: null,
   cropDataUrl: null,
   cropAspect: 1,
@@ -149,19 +190,32 @@ function reducer(state: State, action: Action): State {
       return {
         ...initialState,
         brief: state.brief, // keep brief across re-uploads
+        renderEngine: state.renderEngine,
         planDataUrl: action.dataUrl,
-        step: "overview",
+        planSize: action.size,
+        step: "house",
+        houseStatus: "reading",
       };
     case "SET_BRIEF":
       return { ...state, brief: { ...state.brief, ...action.patch } };
+    case "HOUSE_START":
+      return { ...state, houseStatus: "reading", house: null, houseMassingDataUrl: null, selectedRoom: null, error: null };
+    case "HOUSE_DONE":
+      return { ...state, houseStatus: "ready", house: action.house, selectedRoom: null, error: null };
+    case "HOUSE_MASSING":
+      return { ...state, houseMassingDataUrl: action.dataUrl };
+    case "HOUSE_FAILED":
+      return { ...state, houseStatus: "failed", house: null, error: action.message };
+    case "SELECT_HOUSE_ROOM":
+      return { ...state, selectedRoom: action.index };
     case "LOAD_OVERVIEW":
       return { ...state, loading: true, error: null };
     case "OVERVIEW_DONE":
       return { ...state, loading: false, overviewDataUrl: action.dataUrl };
-    case "APPROVE":
+    case "GO_SELECT":
       return { ...state, step: "select", error: null };
-    case "GO_OVERVIEW":
-      return { ...state, step: "overview", error: null };
+    case "GO_HOUSE":
+      return { ...state, step: "house", error: null, loading: false, stage: "idle" };
     case "SET_ROOM_TYPE":
       return { ...state, roomType: action.value };
     case "SET_ROOM_STYLE":
@@ -175,6 +229,15 @@ function reducer(state: State, action: Action): State {
         cropDataUrl: action.dataUrl,
         cropAspect: action.aspect,
         ...FRESH_ROOM,
+        ...(action.known
+          ? {
+              boxes: action.known.boxes,
+              roomSize: action.known.roomSize,
+              roomLabel: action.known.label,
+              knownLayout: true,
+            }
+          : {}),
+        roomType: action.known ? action.known.roomType : state.roomType,
         roomStyleId: state.brief.styleId,
         stage: "idle",
         error: null,
@@ -232,7 +295,8 @@ function reducer(state: State, action: Action): State {
     case "PICK_ANOTHER":
       return {
         ...state,
-        step: "select",
+        // Back to the house model when there is one, else to drawing a box.
+        step: state.houseStatus === "ready" ? "house" : "select",
         cropDataUrl: null,
         ...FRESH_ROOM,
         loading: false,
@@ -242,7 +306,7 @@ function reducer(state: State, action: Action): State {
     case "ERROR":
       return { ...state, loading: false, stage: "idle", error: action.message };
     case "RESET":
-      return { ...initialState, brief: state.brief };
+      return { ...initialState, brief: state.brief, renderEngine: state.renderEngine };
     default:
       return state;
   }
@@ -269,12 +333,63 @@ export default function PlanToThreeD() {
     styleId: state.roomStyleId,
   });
 
+  // Reading the house is bound to the plan, not to the request token: a room
+  // flow started later must not cancel it.
+  const houseReq = useRef(0);
+
+  /**
+   * Stage 0: read the WHOLE plan into one model, then build our own
+   * axonometric clay render of it (the overview's reference + evidence).
+   */
+  async function readHouse(planDataUrl: string, size: { width: number; height: number } | null) {
+    const id = (houseReq.current += 1);
+    dispatch({ type: "HOUSE_START" });
+    const aspect = size && size.height > 0 ? size.width / size.height : 1;
+    let house: HouseModel;
+    try {
+      const raw = await requestHouse(planDataUrl);
+      if (houseReq.current !== id) return;
+      house = finalizeHouse(raw, aspect);
+      dispatch({ type: "HOUSE_DONE", house });
+    } catch (err) {
+      if (houseReq.current !== id) return;
+      dispatch({ type: "HOUSE_FAILED", message: message(err) });
+      return;
+    }
+    try {
+      const massing = await renderHouseIso(house);
+      if (houseReq.current !== id) return;
+      dispatch({ type: "HOUSE_MASSING", dataUrl: massing });
+    } catch {
+      /* the flow continues without the clay overview */
+    }
+  }
+
+  async function setPlan(dataUrl: string) {
+    nextReq();
+    let size: { width: number; height: number } | null = null;
+    try {
+      size = await imageSize(dataUrl);
+    } catch {
+      size = null;
+    }
+    dispatch({ type: "SET_PLAN", dataUrl, size });
+    void readHouse(dataUrl, size);
+  }
+
+  function retryHouse() {
+    if (!state.planDataUrl) return;
+    void readHouse(state.planDataUrl, state.planSize);
+  }
+
   async function generateOverview() {
     if (!state.planDataUrl) return;
     const id = nextReq();
     dispatch({ type: "LOAD_OVERVIEW" });
     try {
-      const image = await requestOverview(state.planDataUrl, state.brief);
+      // Styled from our own clay model of the house when it exists, so the
+      // overview's rooms, walls and openings are the plan's, not a re-drawing.
+      const image = await requestOverview(state.planDataUrl, state.brief, state.houseMassingDataUrl ?? undefined);
       if (isStale(id)) return;
       dispatch({ type: "OVERVIEW_DONE", dataUrl: image });
     } catch (err) {
@@ -285,12 +400,12 @@ export default function PlanToThreeD() {
 
   // The clay massing + depth map + layout text for a set of boxes. Pure
   // client-side work, so an edited layout rebuilds for free.
-  async function buildLayout(boxes: SpatialBox[], roomSize: RoomSize | null) {
+  async function buildLayout(boxes: SpatialBox[], roomSize: RoomSize | null, cropAspect = state.cropAspect) {
     // Best-effort: a null blockout (no boxes / no WebGL) falls back to text-to-image.
     let blockout: string | null = null;
     let depth: string | null = null;
     try {
-      const maps = await buildBlockoutMaps(boxes, state.cropAspect, { roomSize });
+      const maps = await buildBlockoutMaps(boxes, cropAspect, { roomSize });
       blockout = maps?.clay ?? null;
       depth = maps?.depth ?? null;
     } catch {
@@ -324,14 +439,18 @@ export default function PlanToThreeD() {
   }
 
   // Write (or rewrite) the interior prompt for the current crop, and build the
-  // eye-level 3D blockout from the detected boxes so the render can lock layout.
+  // eye-level 3D blockout from the room's boxes so the render can lock layout.
+  // With a layout known from the house model the writer skips detection and
+  // the boxes (as the user may have edited them) are the ground truth.
   async function writePrompt(crop: string, id: number) {
     try {
+      const known = state.knownLayout ? { boxes: state.boxes, roomSize: state.roomSize } : undefined;
       const { prompt, boxes, roomSize } = await requestRoomPrompt(
         crop,
         effectiveBrief(),
         state.roomType,
         state.overviewDataUrl ?? undefined,
+        known,
       );
       if (isStale(id)) return;
       const { blockout, depth, lock, layout } = await buildLayout(boxes, roomSize);
@@ -342,16 +461,21 @@ export default function PlanToThreeD() {
       dispatch({ type: "PROMPT_DONE", prompt, blockout, depth, lock, layout, boxes, roomSize });
     } catch (err) {
       if (isStale(id)) return;
-      // Leave the box editable so the user can still write a prompt by hand.
+      // Leave the box editable so the user can still write a prompt by hand;
+      // a known layout is kept so the lock still builds.
+      const boxes = state.knownLayout ? state.boxes : [];
+      const roomSize = state.knownLayout ? state.roomSize : null;
+      const built = boxes.length ? await buildLayout(boxes, roomSize) : null;
+      if (isStale(id)) return;
       dispatch({
         type: "PROMPT_DONE",
         prompt: "",
-        blockout: null,
-        depth: null,
-        lock: { status: "none", count: 0, summary: "" },
-        layout: "",
-        boxes: [],
-        roomSize: null,
+        blockout: built?.blockout ?? null,
+        depth: built?.depth ?? null,
+        lock: built?.lock ?? { status: "none", count: 0, summary: "" },
+        layout: built?.layout ?? "",
+        boxes,
+        roomSize,
       });
       dispatch({ type: "ERROR", message: message(err) });
     }
@@ -375,6 +499,40 @@ export default function PlanToThreeD() {
     if (isStale(id)) return;
     const aspect = rect.height > 0 ? rect.width / rect.height : 1;
     dispatch({ type: "BEGIN_SETUP", dataUrl: crop, aspect });
+  }
+
+  /**
+   * A room picked in the house model: crop its rectangle from the plan and
+   * carry its layout (openings on its walls, furniture inside it) and true
+   * size straight from the model — no per-room detection.
+   */
+  async function renderHouseRoom() {
+    const { house, planDataUrl, planSize, selectedRoom } = state;
+    if (!house || !planDataUrl || selectedRoom === null || !house.rooms[selectedRoom]) return;
+    const id = nextReq();
+    const natural = planSize ?? { width: 1000, height: 1000 };
+    let crop: string;
+    try {
+      crop = await cropToDataUrl(planDataUrl, roomRectPx(house, selectedRoom, natural.width, natural.height));
+    } catch (err) {
+      if (isStale(id)) return;
+      dispatch({ type: "ERROR", message: message(err) });
+      return;
+    }
+    if (isStale(id)) return;
+    const planAspect = natural.height > 0 ? natural.width / natural.height : 1;
+    const label = house.rooms[selectedRoom].label;
+    dispatch({
+      type: "BEGIN_SETUP",
+      dataUrl: crop,
+      aspect: roomAspectOf(house, selectedRoom, planAspect),
+      known: {
+        boxes: roomLocalBoxes(house, selectedRoom),
+        roomSize: roomSizeOf(house, selectedRoom),
+        label,
+        roomType: roomTypeFromLabel(label),
+      },
+    });
   }
 
   // After the user picks type/style, write the interior prompt.
@@ -431,32 +589,43 @@ export default function PlanToThreeD() {
     nextReq();
     dispatch({ type: "EDIT_PROMPT_STEP" });
   }
-  function goOverview() {
+  function goHouse() {
     nextReq();
-    dispatch({ type: "GO_OVERVIEW" });
+    dispatch({ type: "GO_HOUSE" });
+  }
+  function goSelect() {
+    nextReq();
+    dispatch({ type: "GO_SELECT" });
   }
   function resetAll() {
     nextReq();
+    houseReq.current += 1;
     dispatch({ type: "RESET" });
   }
 
   return (
     <section className="space-y-6">
-      {state.step === "upload" && (
-        <Hero onPlanSelected={(dataUrl) => dispatch({ type: "SET_PLAN", dataUrl })} />
-      )}
+      {state.step === "upload" && <Hero onPlanSelected={(dataUrl) => void setPlan(dataUrl)} />}
 
       {state.step !== "upload" && <StepBar step={state.step} />}
 
-      {state.step === "overview" && state.planDataUrl && (
-        <OverviewView
+      {state.step === "house" && state.planDataUrl && (
+        <HouseStep
           planDataUrl={state.planDataUrl}
-          overviewDataUrl={state.overviewDataUrl}
           brief={state.brief}
-          loading={state.loading}
+          house={state.house}
+          houseStatus={state.houseStatus}
+          massingDataUrl={state.houseMassingDataUrl}
+          overviewDataUrl={state.overviewDataUrl}
+          overviewLoading={state.loading}
+          selectedRoom={state.selectedRoom}
+          error={state.error}
           onBriefChange={(patch) => dispatch({ type: "SET_BRIEF", patch })}
-          onGenerate={generateOverview}
-          onApprove={() => dispatch({ type: "APPROVE" })}
+          onSelectRoom={(index) => dispatch({ type: "SELECT_HOUSE_ROOM", index })}
+          onRenderRoom={() => void renderHouseRoom()}
+          onRetryHouse={retryHouse}
+          onGenerateOverview={() => void generateOverview()}
+          onDrawBox={goSelect}
           onReset={resetAll}
         />
       )}
@@ -464,16 +633,17 @@ export default function PlanToThreeD() {
       {state.step === "select" && state.planDataUrl && (
         <RoomSelector
           imageSrc={state.planDataUrl}
-          referenceSrc={state.overviewDataUrl}
+          referenceSrc={state.overviewDataUrl ?? state.houseMassingDataUrl}
           loading={state.stage !== "idle"}
           onSelect={selectRoom}
-          onBack={goOverview}
+          onBack={goHouse}
         />
       )}
 
       {state.step === "roomSetup" && (
         <RoomSetup
           cropDataUrl={state.cropDataUrl}
+          roomLabel={state.roomLabel}
           roomType={state.roomType}
           styleId={state.roomStyleId}
           engine={state.renderEngine}
@@ -493,6 +663,7 @@ export default function PlanToThreeD() {
           roomSize={state.roomSize}
           blockoutDataUrl={state.blockoutDataUrl}
           layoutLock={state.layoutLock}
+          knownLayout={state.knownLayout}
           prompt={state.roomPrompt}
           stage={state.stage}
           error={state.error}
@@ -510,6 +681,10 @@ export default function PlanToThreeD() {
           cropDataUrl={state.cropDataUrl}
           boxes={state.boxes}
           blockoutDataUrl={state.blockoutDataUrl}
+          cropAspect={state.cropAspect}
+          roomSize={state.roomSize}
+          onBoxesChange={editBoxes}
+          onRoomSizeChange={editRoomSize}
           layoutLock={state.layoutLock}
           versions={state.roomVersions}
           currentIndex={state.currentVersion}
@@ -536,7 +711,7 @@ export default function PlanToThreeD() {
         />
       )}
 
-      {state.error && state.step !== "room" && state.step !== "roomPrompt" && (
+      {state.error && state.step !== "room" && state.step !== "roomPrompt" && state.step !== "house" && (
         <p className="text-sm text-red-400">{state.error}</p>
       )}
     </section>
