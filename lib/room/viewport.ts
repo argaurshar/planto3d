@@ -9,6 +9,7 @@
 import type { RoomModel, Shot } from "./types";
 import { loadThree, type ThreeBundle } from "./kit";
 import { buildRoomScene, type RoomScene } from "./scene";
+import { moodSpec } from "./moods";
 
 type THREEType = typeof import("three");
 
@@ -185,8 +186,10 @@ export class RoomViewport {
     this.model = model;
     this.room = buildRoomScene(this.mods.T, model, { clay: this.clay });
     this.addMirrors();
+    const mood = moodSpec(model);
     this.room.scene.environment = this.env;
-    this.room.scene.environmentIntensity = this.clay ? 0.9 : 0.45;
+    this.room.scene.environmentIntensity = this.clay ? Math.max(0.3, mood.env * 2) : mood.env;
+    this.renderer.toneMappingExposure = mood.exposure;
     this.hidden = [];
     const w = this.canvas.clientWidth || 800;
     const h = this.canvas.clientHeight || 600;

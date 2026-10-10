@@ -6,7 +6,7 @@
 //
 // Browser only: textures need a <canvas>.
 
-import type { FloorFinish } from "./types";
+import type { FloorFinish, Mood } from "./types";
 import { COLOR_WORDS, STYLES, WOOD_WORDS, type MetalKind, type Palette, type StoneKind, type WoodSpecies } from "./styles";
 import type { StyleId } from "./types";
 
@@ -369,23 +369,39 @@ function paintArt(colors: string[], seed: number): HTMLCanvasElement {
 }
 
 /** What you see through a window: bright sky over soft greenery (it reads as daylight). */
-function paintExterior(): HTMLCanvasElement {
+function paintExterior(mood: Mood = "day"): HTMLCanvasElement {
   const W = 512;
   const H = 512;
   const [c, ctx] = canvas(W, H);
+  // Sky down to the horizon, then the ground; trees along the horizon.
+  const stops: Record<Mood, [string, string, string, string]> = {
+    day: ["#dfeefb", "#f4f8fb", "#c9d8bf", "#9fb58f"],
+    evening: ["#6f7fb3", "#f6b07a", "#5d5547", "#3d3a31"],
+    night: ["#060a16", "#1a2340", "#0d1014", "#08090b"],
+  };
+  const [top, horizon, ground, foot] = stops[mood];
   const g = ctx.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, "#dfeefb");
-  g.addColorStop(0.55, "#f4f8fb");
-  g.addColorStop(0.62, "#c9d8bf");
-  g.addColorStop(1, "#9fb58f");
+  g.addColorStop(0, top);
+  g.addColorStop(0.55, horizon);
+  g.addColorStop(0.62, ground);
+  g.addColorStop(1, foot);
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
   const r = rng(4);
   for (let i = 0; i < 40; i++) {
-    ctx.fillStyle = `rgba(${110 + r() * 40},${140 + r() * 40},${100 + r() * 30},0.5)`;
+    const [cr, cg, cb] = mood === "day" ? [110 + r() * 40, 140 + r() * 40, 100 + r() * 30] : mood === "evening" ? [60 + r() * 20, 55 + r() * 20, 45 + r() * 15] : [8 + r() * 8, 10 + r() * 8, 14 + r() * 8];
+    ctx.fillStyle = `rgba(${cr},${cg},${cb},${mood === "day" ? 0.5 : 0.85})`;
     ctx.beginPath();
     ctx.arc(r() * W, H * (0.55 + r() * 0.1), 20 + r() * 50, 0, Math.PI * 2);
     ctx.fill();
+  }
+  if (mood !== "day") {
+    // Lit windows of the houses across the street.
+    const lit = rng(9);
+    for (let i = 0; i < (mood === "night" ? 26 : 10); i++) {
+      ctx.fillStyle = mood === "night" ? "rgba(255,196,120,0.9)" : "rgba(255,214,160,0.55)";
+      ctx.fillRect(lit() * W, H * (0.56 + lit() * 0.08), 3 + lit() * 4, 3 + lit() * 3);
+    }
   }
   return c;
 }
@@ -397,6 +413,10 @@ export interface MaterialOptions {
   style: StyleId;
   /** White clay everywhere (a Blender-style model check). */
   clay?: boolean;
+  /** Lighting mood: the view outside the windows. */
+  mood?: Mood;
+  /** Scale on glowing surfaces (lamp shades, LEDs), with the mood's lamp strength. */
+  glow?: number;
 }
 
 /**
@@ -407,6 +427,8 @@ export class Materials {
   readonly THREE: ThreeNS;
   readonly palette: Palette;
   readonly clay: boolean;
+  readonly mood: Mood;
+  readonly glow: number;
   private cache = new Map<string, Mat>();
   private textures: Tex[] = [];
 
@@ -414,6 +436,8 @@ export class Materials {
     this.THREE = THREE;
     this.palette = STYLES[opts.style] ?? STYLES["modern-warm"];
     this.clay = Boolean(opts.clay);
+    this.mood = opts.mood ?? "day";
+    this.glow = opts.glow ?? 1;
   }
 
   private memo<T extends Mat>(key: string, make: () => T): T {
@@ -561,14 +585,14 @@ export class Materials {
   /** A light source surface (lamp shade, LED strip, screen glow). */
   emissive(color = "#fff1d6", intensity = 1.6): Mat {
     return this.memo(`emissive:${color}:${intensity}`, () =>
-      new this.THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: intensity, roughness: 1 }),
+      new this.THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: intensity * this.glow, roughness: 1 }),
     );
   }
 
   /** A lamp shade: lit from inside. */
   shade(color = "#f3e9d8"): Mat {
     return this.memo(`emissive:shade:${color}`, () =>
-      new this.THREE.MeshStandardMaterial({ color, emissive: "#ffd9a0", emissiveIntensity: 0.55, roughness: 0.9, side: this.THREE.DoubleSide }),
+      new this.THREE.MeshStandardMaterial({ color, emissive: "#ffd9a0", emissiveIntensity: 0.55 * this.glow, roughness: 0.9, side: this.THREE.DoubleSide }),
     );
   }
 
@@ -619,12 +643,14 @@ export class Materials {
     });
   }
 
+  /** The view outside the windows: bright sky by day, a dusky sunset, or a dark night. */
   exterior(): Mat {
-    return this.memo("exterior", () => {
-      const t = new this.THREE.CanvasTexture(paintExterior());
+    return this.memo(`exterior:${this.mood}`, () => {
+      const t = new this.THREE.CanvasTexture(paintExterior(this.mood));
       t.colorSpace = this.THREE.SRGBColorSpace;
       this.textures.push(t);
-      return new this.THREE.MeshBasicMaterial({ map: t, toneMapped: false, color: new this.THREE.Color(1.6, 1.6, 1.6) });
+      const k = this.mood === "day" ? 1.6 : this.mood === "evening" ? 1.25 : 1;
+      return new this.THREE.MeshBasicMaterial({ map: t, toneMapped: false, color: new this.THREE.Color(k, k, k) });
     });
   }
 

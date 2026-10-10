@@ -150,9 +150,12 @@ def setup():
     if world.node_tree is None:
         world.use_nodes = True
     bg = world.node_tree.nodes.get("Background")
+    # The sky for the room's lighting mood (day, evening, night).
+    sky = DATA.get("world") or {}
     if bg:
-        bg.inputs[0].default_value = (0.78, 0.84, 0.95, 1)
-        bg.inputs[1].default_value = 0.6
+        r, g, b = sky.get("color", (0.78, 0.84, 0.95))
+        bg.inputs[0].default_value = (r, g, b, 1)
+        bg.inputs[1].default_value = sky.get("strength", 0.6)
 
     sc = bpy.context.scene
     sc.render.engine = "CYCLES"
@@ -163,7 +166,7 @@ def setup():
         sc.view_settings.view_transform = "AgX"
     except TypeError:
         sc.view_settings.view_transform = "Filmic"
-    sc.view_settings.exposure = 0.3
+    sc.view_settings.exposure = DATA.get("exposure", 0.3)
     sc.camera = bpy.data.objects[DATA["shots"][0]["name"]]
     return cams
 

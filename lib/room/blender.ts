@@ -16,6 +16,7 @@ import { loadThree } from "./kit";
 import { buildRoomScene } from "./scene";
 import { roomShots } from "./shots";
 import { WALL_T } from "./constants";
+import { moodOf, moodSpec } from "./moods";
 import VOXA_RENDER_PY from "@/blender-server/voxa_render.py";
 
 /** Plan/three coordinates → Blender (glTF import turns y-up into z-up). */
@@ -76,17 +77,19 @@ async function collectLights(room: RoomModel): Promise<LightSpec[]> {
       q.copy(p).add(dir);
       const area = ra.width * ra.height;
       const cove = (o.parent?.name ?? "") === "ceiling";
-      out.push({ kind: "area", name: cove ? "Cove light" : "Window light", loc: bl(p.x, p.y, p.z), target: bl(q.x, q.y, q.z), power: r3(cove ? Math.max(ra.width, ra.height) * 25 : area * 90), color, size: [r3(ra.width), r3(ra.height)] });
+      // Watts follow the three.js intensity, so a mood's dimmer sky or brighter coves carry over.
+      const power = cove ? Math.max(ra.width, ra.height) * 25 * (ra.intensity / 3.2) : area * 90 * (ra.intensity / 4.5);
+      out.push({ kind: "area", name: cove ? "Cove light" : "Window light", loc: bl(p.x, p.y, p.z), target: bl(q.x, q.y, q.z), power: r3(power), color, size: [r3(ra.width), r3(ra.height)] });
     } else if ((o as import("three").SpotLight).isSpotLight) {
       const s = o as import("three").SpotLight;
       s.target.getWorldPosition(q);
-      out.push({ kind: "spot", name: "Downlight", loc: bl(p.x, p.y, p.z), target: bl(q.x, q.y, q.z), power: 30, color });
+      out.push({ kind: "spot", name: "Downlight", loc: bl(p.x, p.y, p.z), target: bl(q.x, q.y, q.z), power: r3(30 * (s.intensity / 9)), color });
     } else if ((o as import("three").DirectionalLight).isDirectionalLight) {
       const d = o as import("three").DirectionalLight;
       d.target.getWorldPosition(q);
       out.push({ kind: "sun", name: "Sun", loc: bl(p.x, p.y, p.z), target: bl(q.x, q.y, q.z), power: r3(Math.min(4, d.intensity * 1.4)), color });
     } else if ((o as import("three").PointLight).isPointLight) {
-      out.push({ kind: "point", name: "Lamp", loc: bl(p.x, p.y, p.z), target: bl(p.x, p.y - 1, p.z), power: 18, color });
+      out.push({ kind: "point", name: "Lamp", loc: bl(p.x, p.y, p.z), target: bl(p.x, p.y - 1, p.z), power: r3(18 * (l.intensity / 3)), color });
     }
   });
   rs.dispose();
@@ -95,8 +98,13 @@ async function collectLights(room: RoomModel): Promise<LightSpec[]> {
 
 /** Everything the Blender script needs besides the model: cameras and lights, in Blender coordinates. */
 export function sceneData(room: RoomModel, lights: LightSpec[], shots: Shot[] = roomShots(room)) {
+  const mood = moodSpec(room);
   return {
     room: { name: room.name, width: room.width, depth: room.depth, height: room.height, wall_t: WALL_T },
+    // The mood's sky and exposure (its sun, sky panels and lamps are already in `lights`).
+    mood: moodOf(room),
+    world: { color: mood.world.color, strength: mood.world.strength },
+    exposure: mood.blenderExposure,
     shots: shots.map((s) => ({
       id: s.id,
       name: s.label,

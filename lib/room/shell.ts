@@ -15,6 +15,7 @@ type Object3D = import("three").Object3D;
 
 import { FALSE_CEILING_DROP, SKIRT_H, WALL_T } from "./constants";
 import { falseCeilingBand } from "./geometry";
+import { moodSpec } from "./moods";
 export { FALSE_CEILING_DROP, SKIRT_H, WALL_T };
 
 /** Length of a wall along its own axis (x for top/bottom, z for left/right). */
@@ -261,7 +262,7 @@ function buildCeiling(c: BuildCtx, g: Group): void {
   const white = m.wallPaint("#f7f6f3");
   if (!room.falseCeiling) {
     k.cyl(g, 0.22, 0.22, 0.04, m.emissive("#fff4e2", 2.2), room.width / 2, H - 0.03, room.depth / 2, 40, { cast: false });
-    const l = new THREE.PointLight("#ffe6c4", 10, 9, 2);
+    const l = new THREE.PointLight("#ffe6c4", 10 * k.lampScale, 9, 2);
     l.position.set(room.width / 2, H - 0.25, room.depth / 2);
     g.add(l);
     return;
@@ -298,7 +299,7 @@ function buildCeiling(c: BuildCtx, g: Group): void {
   k.slab(g, 0.02, 0.01, D - 2 * band - 0.04, led, band - 0.06, y + 0.085, D / 2, { cast: false });
   k.slab(g, 0.02, 0.01, D - 2 * band - 0.04, led, W - band + 0.06, y + 0.085, D / 2, { cast: false });
   const cove = (x: number, z: number, w: number, d: number) => {
-    const l = new THREE.RectAreaLight("#ffd29a", 3.2, w, d);
+    const l = new THREE.RectAreaLight("#ffd29a", 3.2 * k.lampScale, w, d);
     l.position.set(x, y + 0.1, z);
     l.lookAt(x, H, z);
     g.add(l);
@@ -319,7 +320,7 @@ function buildCeiling(c: BuildCtx, g: Group): void {
   spots.forEach(([x, z], i) => {
     k.cyl(g, 0.045, 0.045, 0.01, disc, x, y - 0.002, z, 20, { cast: false });
     if (i % 2 === 0) {
-      const s = new THREE.SpotLight("#ffe4bf", 9, 6, 0.75, 0.85, 2);
+      const s = new THREE.SpotLight("#ffe4bf", 9 * k.lampScale, 6, 0.75, 0.85, 2);
       s.position.set(x, y - 0.02, z);
       s.target.position.set(x, 0, z + (z < D / 2 ? 0.4 : -0.4));
       g.add(s);
@@ -328,14 +329,19 @@ function buildCeiling(c: BuildCtx, g: Group): void {
   });
 }
 
-/** Sun through the biggest window plus soft daylight panels at every window. */
+/**
+ * Light from outside, by the room's mood: a sky panel at every window and the
+ * sun through the biggest one (high by day, low and orange in the evening,
+ * none at night), plus a soft hemisphere fill.
+ */
 export function buildDaylight(c: BuildCtx, root: Group): void {
   const { k, room } = c;
   const THREE = k.THREE;
+  const mood = moodSpec(room);
   const windows = room.openings.filter((o) => o.kind === "window" || o.kind === "sliding");
   for (const o of windows) {
     const { x, z, nx, nz } = openingCentre(room, o);
-    const l = new THREE.RectAreaLight("#e8f0ff", 4.5, o.width, o.height);
+    const l = new THREE.RectAreaLight(mood.sky.color, mood.sky.intensity, o.width, o.height);
     const y = (o.kind === "window" ? o.sill : 0) + o.height / 2;
     l.position.set(x + nx * 0.02, y, z + nz * 0.02);
     l.lookAt(x + nx, y, z + nz);
@@ -343,27 +349,29 @@ export function buildDaylight(c: BuildCtx, root: Group): void {
     root.add(l);
   }
   const main = [...windows].sort((a, b) => b.width * b.height - a.width * a.height)[0];
-  const sun = new THREE.DirectionalLight("#fff0d9", main ? 2.6 : 0.8);
-  if (main) {
-    const { x, z, nx, nz } = openingCentre(room, main);
-    // Sun outside the window, high and a little to the side, shining in.
-    const side = main.wall === "top" || main.wall === "bottom" ? [1, 0] : [0, 1];
-    sun.position.set(x - nx * 6 + side[0] * 2.5, 6.5, z - nz * 6 + side[1] * 2.5);
-    sun.target.position.set(x + nx * 2, 0, z + nz * 2);
-  } else {
-    sun.position.set(room.width * 0.2, 8, -5);
-    sun.target.position.set(room.width / 2, 0, room.depth / 2);
+  if (mood.sun.intensity > 0) {
+    const sun = new THREE.DirectionalLight(mood.sun.color, main ? mood.sun.intensity : mood.sun.intensity * 0.3);
+    if (main) {
+      const { x, z, nx, nz } = openingCentre(room, main);
+      // Sun outside the window, a little to the side, shining in: high by day, grazing in the evening.
+      const side = main.wall === "top" || main.wall === "bottom" ? [1, 0] : [0, 1];
+      sun.position.set(x - nx * 6 + side[0] * 2.5, mood.sun.height, z - nz * 6 + side[1] * 2.5);
+      sun.target.position.set(x + nx * 2, 0, z + nz * 2);
+    } else {
+      sun.position.set(room.width * 0.2, 8, -5);
+      sun.target.position.set(room.width / 2, 0, room.depth / 2);
+    }
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.bias = -0.0004;
+    sun.shadow.normalBias = 0.02;
+    const reach = Math.max(room.width, room.depth) + 3;
+    Object.assign(sun.shadow.camera, { left: -reach, right: reach, top: reach, bottom: -reach, near: 0.5, far: 30 });
+    sun.name = "sun";
+    root.add(sun);
+    root.add(sun.target);
   }
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.bias = -0.0004;
-  sun.shadow.normalBias = 0.02;
-  const reach = Math.max(room.width, room.depth) + 3;
-  Object.assign(sun.shadow.camera, { left: -reach, right: reach, top: reach, bottom: -reach, near: 0.5, far: 30 });
-  sun.name = "sun";
-  root.add(sun);
-  root.add(sun.target);
-  const amb = new THREE.HemisphereLight("#fdf8f0", "#b9a68f", 0.35);
+  const amb = new THREE.HemisphereLight(mood.fill.sky, mood.fill.ground, mood.fill.intensity);
   amb.name = "fill";
   root.add(amb);
 }

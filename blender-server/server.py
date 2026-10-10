@@ -139,7 +139,7 @@ def clean_scene(raw):
             item["size"] = vec(l.get("size"), 2, 0.001, 50, "light.size")
         out_lights.append(item)
     room = raw.get("room") if isinstance(raw.get("room"), dict) else {}
-    return {
+    out = {
         "room": {
             "name": text(room.get("name", "Room"), 80, "room name"),
             "width": num(room.get("width", 4), 0.5, 100, "room width"),
@@ -149,6 +149,18 @@ def clean_scene(raw):
         "shots": out_shots,
         "lights": out_lights,
     }
+    # Lighting mood: the sky colour and strength, and the view exposure (all optional).
+    world = raw.get("world")
+    if world is not None:
+        if not isinstance(world, dict):
+            raise BadRequest("scene.json world must be an object")
+        out["world"] = {
+            "color": vec(world.get("color", [0.78, 0.84, 0.95]), 3, 0, 1, "world.color"),
+            "strength": num(world.get("strength", 0.6), 0, 10, "world.strength"),
+        }
+    if raw.get("exposure") is not None:
+        out["exposure"] = num(raw.get("exposure"), -10, 10, "exposure")
+    return out
 
 
 def read_package(body):

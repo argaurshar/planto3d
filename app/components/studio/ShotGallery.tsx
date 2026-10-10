@@ -122,7 +122,7 @@ function Card({ r, version, aiReady, aiName, blenderReady, onRealistic, onBlende
           </button>
         </div>
 
-        {!r.real && <input value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="Optional for AI: evening light, warm lamps on…" className="input px-2 py-1.5 text-xs" disabled={r.realBusy} />}
+        {!r.real && <input value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="Optional for AI: warmer lamps, softer shadows…" className="input px-2 py-1.5 text-xs" disabled={r.realBusy} />}
         <div className="flex flex-wrap gap-1.5">
           <button type="button" disabled={r.realBusy || !aiReady} onClick={() => onRealistic(r.id, extra)} className="btn-outline min-h-0 px-3 py-1.5 text-xs" title={aiReady ? "" : "Add an AI key at the bottom of the page"}>
             {r.real ? "↻ Realistic again (AI)" : "✨ Make realistic (AI)"}

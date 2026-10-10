@@ -85,6 +85,8 @@ export class Kit {
   readonly T: ThreeBundle;
   readonly THREE: ThreeNS;
   readonly m: Materials;
+  /** Lamp strength for the lighting mood (brighter in the evening and at night). */
+  lampScale = 1;
 
   constructor(T: ThreeBundle, m: Materials) {
     this.T = T;
@@ -169,7 +171,7 @@ export class Kit {
 
   /** A warm point light (lamps). Never casts shadows: lamps are many, shadows are costly. */
   lamp(parent: Object3D, x: number, y: number, z: number, intensity = 6, color = "#ffd6a0", distance = 5): void {
-    const l = new this.THREE.PointLight(color, intensity, distance, 2);
+    const l = new this.THREE.PointLight(color, intensity * this.lampScale, distance, 2);
     l.position.set(x, y, z);
     l.castShadow = false;
     parent.add(l);

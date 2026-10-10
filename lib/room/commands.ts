@@ -7,13 +7,14 @@
 // understand) returns the SAME operations as JSON, so nothing — local or AI —
 // ever edits the room except through `applyOps`, which validates and places.
 
-import type { Dir, FloorFinish, Item, ItemType, RoomKind, RoomModel, StyleId, Wall } from "./types";
+import type { Dir, FloorFinish, Item, ItemType, Mood, RoomKind, RoomModel, StyleId, Wall } from "./types";
 import { CATALOG, ITEM_TYPES, itemLabel, normalize, typeFromWords, ROOM_KINDS } from "./catalog";
 import { COLOR_WORDS, STYLES, STYLE_IDS } from "./styles";
 import { clamp, dirVec, footprint, mainItem, opposite, round2, wallOfDir } from "./geometry";
 import { againstWallAt, clampInside, dirFromVec, fitOnWall, newId, placeNew, settle, wallLen } from "./place";
 import { WALL_CLEAR } from "./constants";
 import { nearestWallAt, resizeRoom } from "./planFit";
+import { MOOD_SPECS, MOODS, moodFromWords } from "./moods";
 
 // ---------------------------------------------------------------- operations
 
@@ -70,6 +71,7 @@ export type Op =
       depth?: number;
       name?: string;
       kind?: RoomKind;
+      mood?: Mood;
     }
   | { op: "shot"; shot: string };
 
@@ -152,6 +154,11 @@ export function applyOps(room0: RoomModel, ops: Op[]): ApplyResult {
         if (op.style && STYLE_IDS.includes(op.style)) {
           r.style = op.style;
           notes.push(`${STYLES[op.style].label} style`);
+        }
+        if (op.mood && MOODS.includes(op.mood)) {
+          if (op.mood === "day") delete r.mood;
+          else r.mood = op.mood;
+          notes.push(`${MOOD_SPECS[op.mood].label.toLowerCase()} lighting`);
         }
         const w = num(op.width, 1.2, 20);
         const d = num(op.depth, 1.2, 20);
@@ -397,6 +404,8 @@ const VERB = {
 /** Words that start a new instruction; a clause without one continues the previous verb. */
 const ACTION = /\b(add|put|place|insert|include|install|remove|delete|erase|take out|get rid of|move|shift|push|slide|rotate|turn|spin|flip|change|replace|swap|switch|make|convert|use|update|redesign|restyle|paint|set|show|take|want|need|give me|resize|increase|decrease|reduce)\b|^(no|without)\b/;
 
+const MOOD_WORDS = /\b(night|nighttime|midnight|evening|dusk|sunset|golden hour|twilight|day|daylight|daytime|morning|noon|afternoon|sunny|sunlight)\b/g;
+
 const SHOT_WORDS = /\b(shot|view|camera|angle|perspective|picture|photo|render from|look from|see from|show)\b/;
 
 const STOP = new Set(["the", "a", "an", "of", "to", "with", "and", "in", "on", "for", "it", "its", "this", "that", "please", "unit", "table", "wood", "front", "top", "set", "shelf", "chair", "bed", "sofa"]);
@@ -574,6 +583,17 @@ export function parseCommand(room: RoomModel, text: string, ctx: CommandContext)
     if (VERB.move.test(clause) && !/\bpanel\b/.test(clause)) clause = clause.replace(/\bbed back\b/, "bed backward");
     const has = (re: RegExp) => re.test(clause);
     const type = typeIn(room, clause);
+
+    // Lighting mood: "evening light", "make it night", "night view from the bed back".
+    // ("night stand" names a piece; "night view from the bed back" is a mood and a shot.)
+    const mood = !has(VERB.add) && !has(VERB.remove) && (!type || has(SHOT_WORDS)) ? moodFromWords(clause) : null;
+    if (mood) {
+      ops.push({ op: "room", mood });
+      const rest = clause.replace(MOOD_WORDS, " ");
+      const s = has(SHOT_WORDS) ? shotFrom(rest) : null;
+      if (s) ops.push({ op: "shot", shot: s });
+      continue;
+    }
 
     // Camera: "show the bed back view", "take a shot from the door", "next shot".
     if (has(SHOT_WORDS) && !has(VERB.add) && !has(VERB.remove)) {
@@ -876,6 +896,7 @@ export function sanitizeOps(room: RoomModel, raw: unknown): Op[] {
           style: STYLE_IDS.includes(o.style as StyleId) ? (o.style as StyleId) : undefined,
           width: n(o.width),
           depth: n(o.depth),
+          mood: MOODS.includes(o.mood as Mood) ? (o.mood as Mood) : undefined,
         });
         break;
       case "shot":

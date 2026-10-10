@@ -28,6 +28,9 @@ export type RoomKind =
 
 export type FloorFinish = "wood" | "tile" | "marble" | "carpet";
 
+/** Time of day the room is lit for: daylight, golden-hour evening, or night with only its own lights. */
+export type Mood = "day" | "evening" | "night";
+
 export type StyleId = "modern-warm" | "scandinavian" | "luxury" | "minimal" | "indian-contemporary";
 
 export type ItemType =
@@ -132,6 +135,8 @@ export interface RoomModel {
   scaleSource?: "printed" | "estimated" | "manual";
   /** Where the room sits on the uploaded plan, for the plan check view. */
   plan?: PlanFit;
+  /** Lighting mood; absent means day. */
+  mood?: Mood;
 }
 
 /**

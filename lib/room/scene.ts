@@ -8,6 +8,7 @@ import { Kit } from "./kit";
 import { Materials } from "./materials";
 import { buildItem, type BuildCtx } from "./furniture";
 import { buildDaylight, buildShell, FALSE_CEILING_DROP } from "./shell";
+import { moodOf, moodSpec } from "./moods";
 
 type Scene = import("three").Scene;
 type Group = import("three").Group;
@@ -32,8 +33,10 @@ export interface SceneOptions {
 
 export function buildRoomScene(T: ThreeBundle, room: RoomModel, opts: SceneOptions = {}): RoomScene {
   const { THREE } = T;
-  const materials = new Materials(THREE, { style: room.style, clay: opts.clay });
+  const mood = moodSpec(room);
+  const materials = new Materials(THREE, { style: room.style, clay: opts.clay, mood: moodOf(room), glow: mood.lamps });
   const k = new Kit(T, materials);
+  k.lampScale = mood.lamps;
   const scene = new THREE.Scene();
   scene.background = new THREE.Color("#d9d6d0");
   const root = k.group(scene, "room");

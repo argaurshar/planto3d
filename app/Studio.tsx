@@ -18,6 +18,7 @@ import { formatSize } from "@/lib/room/geometry";
 import { itemLabel } from "@/lib/room/catalog";
 import { cropPlan, loadPlanFile, loadPlanImage, savePlanImage, type PlanImage } from "@/lib/planFile";
 import { placeOpening, refitPlan, resizeRoom } from "@/lib/room/planFit";
+import { MOOD_SPECS, MOODS, moodOf } from "@/lib/room/moods";
 import { aiCommand, aiLabel, aiReadPlan, aiRealistic, currentProvider, IS_STATIC } from "@/lib/ai/client";
 import Viewport3D, { type Viewport3DHandle } from "./components/studio/Viewport3D";
 import ShotBar from "./components/studio/ShotBar";
@@ -106,8 +107,9 @@ function suggestionsFor(room: RoomModel, selectedId: string | null): string[] {
   } else if (has("sofa")) {
     s.push("Change sofa design", "Make the sofa emerald velvet", "Take shot from sofa back");
   }
+  s.push(moodOf(room) === "day" ? "Evening light" : moodOf(room) === "evening" ? "Night view" : "Daylight");
   s.push("Next shot");
-  return s.slice(0, 7);
+  return s.slice(0, 8);
 }
 
 let logSeq = 0;
@@ -195,9 +197,10 @@ export default function Studio() {
       try {
         const raw = await vp.current!.capture(pending.shot);
         if (cancelled) return;
+        const mood = moodOf(room);
         const rec: ShotRecord = {
           id: pending.replace ?? `shot-${pending.nonce}`,
-          label: pending.shot.label,
+          label: mood === "day" ? pending.shot.label : `${pending.shot.label} · ${MOOD_SPECS[mood].label.toLowerCase()}`,
           shot: pending.shot,
           raw,
           version: m.version,
@@ -559,6 +562,23 @@ export default function Studio() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <div className="flex gap-0.5 rounded-full bg-white/5 p-1 text-xs" role="group" aria-label="Lighting">
+            {MOODS.map((md) => {
+              const on = moodOf(room) === md;
+              return (
+                <button
+                  key={md}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => !on && applyOpsNow([{ op: "room", mood: md }])}
+                  className={`rounded-full px-2.5 py-1 transition ${on ? "bg-amber-300/20 text-amber-100" : "text-neutral-400 hover:text-white"}`}
+                  title={`${MOOD_SPECS[md].label} lighting for the 3D view, shots, Blender and the realistic pass`}
+                >
+                  {MOOD_SPECS[md].icon} {MOOD_SPECS[md].label}
+                </button>
+              );
+            })}
+          </div>
           <button type="button" onClick={() => setClay((c) => !c)} className="btn-outline min-h-0 px-3 py-1.5 text-xs" title="White clay model, to check the geometry">
             {clay ? "◐ Materials" : "◯ Clay"}
           </button>
