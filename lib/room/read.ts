@@ -106,7 +106,7 @@ function nearest(r: Rect, W: number, D: number, exclude?: Wall): { wall: Wall; g
 export function readingToRoom(
   reading: PlanReading,
   image: { width: number; height: number },
-  hint: { kind?: RoomKind; name?: string } = {},
+  hint: { kind?: RoomKind; name?: string; planRef?: string } = {},
 ): ReadResult {
   const warnings: string[] = [];
   const IW = image.width;
@@ -202,7 +202,9 @@ export function readingToRoom(
     const wall = (Object.keys(dist) as Wall[]).sort((a, b2) => edge[a] + dist[a] * 0.25 - (edge[b2] + dist[b2] * 0.25))[0];
     const horizontal = wall === "top" || wall === "bottom";
     const k0 = String(o.kind ?? "door").toLowerCase();
-    const kind: OpeningKind = /slid|balcony|french/.test(k0) ? "sliding" : /window|ventilator/.test(k0) ? "window" : /open|arch|passage/.test(k0) ? "opening" : "door";
+    // A "slider window" is a window; only a sliding DOOR (or balcony / french door) is full height.
+    const kind: OpeningKind =
+      /window|ventilator/.test(k0) && !/door/.test(k0) ? "window" : /slid|balcony|french/.test(k0) ? "sliding" : /open|arch|passage/.test(k0) ? "opening" : "door";
     const L = horizontal ? W : D;
     let width = horizontal ? r.x1 - r.x0 : r.z1 - r.z0;
     width = kind === "door" ? clamp(width, 0.7, 1.5) : kind === "window" ? clamp(width, 0.45, Math.min(4, L - 0.2)) : clamp(width, 0.8, Math.min(4.5, L - 0.2));
@@ -328,6 +330,7 @@ export function readingToRoom(
     openings: uniq,
     items,
     scaleSource,
+    plan: { ref: hint.planRef ?? "plan", imageW: IW, imageH: IH, box: [room.x0, room.z0, room.x1, room.z1].map((v) => Math.round(v * 10) / 10) as [number, number, number, number] },
   };
   const settled = settle(roomModel);
   if (!uniq.some((o) => o.kind !== "window")) warnings.push("No door was found on the plan — the entry view is taken from the bottom wall. Add the door in Room settings.");

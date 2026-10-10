@@ -51,6 +51,18 @@ build 3D", or skip the AI and enter the size) → `studio`:
   drag the selected piece on the floor to move it, and drag empty space to
   orbit. Its `capture(shot)` renders 1600×1200 PNG shots. It waits for WebGL
   and re-syncs to the latest model first.
+- `studio/PlanCheck.tsx` is the **plan check** view. When the room has a plan
+  image, a "3D model | Plan check" switch lays it over the viewport (the 3D
+  view stays mounted, so shots still work). It is an SVG over the plan in
+  image pixels:
+  - The dashed outline is the walls. Furniture is green with its front edge
+    drawn heavy, wall-hung pieces are violet, doors orange, windows blue.
+  - Drag a piece to move it (an `update` op). Drag a door or window onto any
+    wall (`placeOpening`). Drag the outline's handles onto the drawing's inner
+    wall lines (`refitPlan`, previewed live).
+  - A room set up by hand ("skip the AI") has no fit yet: drag a box over the
+    room's inner walls to place it.
+  - It also has a whole-sheet/zoom toggle, labels and a model-strength slider.
 - `studio/ShotBar.tsx` lists the preset shots and has "Take this shot", which
   captures the preset or, after orbiting, the free camera.
 - `studio/CommandBar.tsx` holds the command box, contextual suggestions, undo
@@ -81,7 +93,9 @@ back is on the opposite side. An opening's `offset` is its centre measured
 from the left end of top/bottom walls and from the top end of left/right
 walls.
 
-- `types.ts`: `RoomModel`, `Item`, `Opening`, `Shot`.
+- `types.ts`: `RoomModel`, `Item`, `Opening`, `Shot`, `PlanFit` (the room's
+  interior box in plan-image pixels, `RoomModel.plan`, so undo restores it
+  with the model).
 - `catalog.ts` defines every `ItemType`: its label, aliases used for commands
   and plan labels (longest alias wins, so "bed back" is not "bed"), standard
   size, plausible size range, `againstWall` / `wallMounted` / `flat`, material
@@ -133,6 +147,17 @@ walls.
     names only those.
 - `geometry.ts`: footprints, `wallBehind`, `mainDoor`, `mainItem`,
   `itemsAgainst` and `formatSize` (m + ft).
+- `planFit.ts` keeps the model and its plan in step:
+  - `toPlan` / `fromPlan` map metres to plan-image pixels and back. The box
+    maps the whole room, so the overlay stays aligned after a resize.
+  - `resizeRoom` sets the size (room op, Room panel). Pieces against a wall
+    stay flush. With a plan, everything else keeps its place on the drawing
+    (it is a correction, not an extension); without one, positions stay in
+    metres. It sets `scaleSource: "manual"`.
+  - `refitPlan(room, box)` moves the walls on the drawing: openings and loose
+    pieces keep their place on it, and flush pieces stay flush. A printed or
+    typed size is kept (the scale was off); an estimated one keeps its scale.
+  - `placeOpening` drops a door or window on the nearest wall at a point.
 - `place.ts` decides where a new piece goes:
   - A bed back panel spans the wall behind the bed, and side tables flank the
     bed's head.
@@ -145,6 +170,8 @@ walls.
 - `commands.ts`: `parseCommand` → `Op[]` (`add` / `remove` / `update` /
   `room` / `shot`) → `applyOps`, which validates, places and never throws.
   `runCommand` = parse + apply. `sanitizeOps` validates AI-proposed ops.
+  Room sizes read metres, mm, feet and feet-inches ("room size 11'8\" x
+  20'").
   Clause splitting keeps the verb across "and" ("add a bed back and side
   tables"). "that/it" means the selection, or the last piece touched. "move
   the bed back" means backwards.
@@ -155,7 +182,9 @@ walls.
     is estimated from door and bed sizes, then from a typical area, and
     flagged `estimated`.
   - Each opening is snapped to its wall, deduplicated, and one is made the
-    main door.
+    main door. A "slider window" is a window; only a `sliding_door` (or
+    balcony / french door) is full height.
+  - The room box is kept as `room.plan` for the plan check view.
   - Each piece is typed, sized into its catalog range, faced (bed `head`,
     `front`, or its nearest wall) and pushed flush.
 - `furnish.ts`: `autoFurnish` gives a standard layout per room kind using the
@@ -225,8 +254,9 @@ walls.
 - `prompts.ts` holds the prompts for each job:
   - `PLAN_READER_SYSTEM` asks for JSON with `room_box`, `printed_size`
     (verbatim), `openings[]` and `items[]` as Gemini-native
-    `[ymin,xmin,ymax,xmax]` 0-1000 boxes, bed `head`, and `front`. It says
-    never compute or guess numbers and never invent furniture.
+    `[ymin,xmin,ymax,xmax]` 0-1000 boxes, bed `head`, and `front`. Opening
+    kinds are `door | window | sliding_door | opening`. It says never compute
+    or guess numbers and never invent furniture.
   - `COMMAND_SYSTEM` + `commandUser` describe the Op schema, the catalog and
     the room JSON.
   - `realisticPrompt` keeps the camera, geometry and every piece exactly, and
@@ -262,7 +292,9 @@ walls.
 
 Other: `lib/planFile.ts` loads images or PDFs (pdf.js **legacy** build, which
 carries polyfills the modern build needs). Images are capped at 2400 px and
-`cropPlan` crops them. `lib/download.ts` and `lib/imageProxy.ts` download
+`cropPlan` crops them. `savePlanImage` / `loadPlanImage` keep a ≤1600 px JPEG
+of the read plan in localStorage (`planto3d_plan_v1`, keyed by the fit's
+`ref`), so the plan check survives a reload. `lib/download.ts` and `lib/imageProxy.ts` download
 remote kie.ai images through a CORS proxy. `components/KeyManager.tsx` is the
 one key field, auto-detecting Google vs kie.ai, and it fires a
 `planto3d-key` event.
@@ -276,14 +308,14 @@ app/
   api/ai/route.ts             # server build: AI jobs with the server key
   components/
     StartScreen.tsx  PlanStep.tsx  KeyManager.tsx  CompareSlider.tsx  DownloadButton.tsx
-    studio/  Viewport3D.tsx  ShotBar.tsx  CommandBar.tsx  ElementsPanel.tsx  RoomPanel.tsx  ShotGallery.tsx
+    studio/  Viewport3D.tsx  PlanCheck.tsx  ShotBar.tsx  CommandBar.tsx  ElementsPanel.tsx  RoomPanel.tsx  ShotGallery.tsx
     RenderServerManager.tsx   # footer: Blender render server URL + token, Test & save
 blender-server/
   voxa_render.py  server.py  smoke_test.py  Dockerfile  README.md
 types/assets.d.ts            # *.py imported as text
 lib/
   room/   types catalog styles materials kit constants geometry shell scene viewport
-          shots place commands read furnish samples blender renderServer  furniture/{index,bedroom,living,other}
+          shots place planFit commands read furnish samples blender renderServer  furniture/{index,bedroom,living,other}
   ai/     client run google kie kiePoll prompts
   planFile.ts  download.ts  imageProxy.ts
 ```
@@ -347,7 +379,8 @@ call `RoomViewport.capture` and save the PNGs.
   memory, so it runs as a single instance.
 - **Plan reading accuracy** depends on the drawing. Low-contrast scans or
   plans without printed dimensions get an estimated scale, flagged in the UI.
-- **Shots/realistic history** is in memory. Only the room model autosaves.
+- **Shots/realistic history** is in memory. Only the room model and its plan
+  image autosave.
 
 ## Notes for AI assistants
 

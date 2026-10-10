@@ -19,7 +19,7 @@ Return ONLY a JSON object, no prose:
   "room_type": "bedroom | living | dining | kitchen | bathroom | study | kids | other",
   "room_box": [ymin, xmin, ymax, xmax],
   "printed_size": { "horizontal": "printed length of the room's left-to-right side, exactly as printed, e.g. 12'0\\" or 3600", "vertical": "printed length of its top-to-bottom side" },
-  "openings": [ { "kind": "door | window | sliding | opening", "box": [ymin, xmin, ymax, xmax], "main": true | false } ],
+  "openings": [ { "kind": "door | window | sliding_door | opening", "box": [ymin, xmin, ymax, xmax], "main": true | false } ],
   "items": [ { "label": "what the symbol is, e.g. king size bed, side table, wardrobe, TV unit, 3 seater sofa, armchair, coffee table, dining table, study table, chair, dresser, bookshelf, plant, rug", "box": [ymin, xmin, ymax, xmax], "head": "top | bottom | left | right (beds only: the side where the pillows / headboard are)", "front": "top | bottom | left | right (the side a person uses: sofa seat, wardrobe doors, TV screen, desk front); omit if unclear" } ]
 }
 
@@ -27,7 +27,7 @@ Rules:
 - Coordinates are integers 0-1000 relative to the WHOLE image, y first: [ymin, xmin, ymax, xmax]. Boxes must be tight.
 - room_box is the INSIDE faces of the room's four walls (the floor area), not the outer wall lines and not the dimension lines.
 - printed_size: copy the room's own dimension text (often written inside the room under its name as "12'0\\" X 14'0\\"", or on dimension lines). "horizontal" is the width as drawn (left-right), "vertical" the depth (top-bottom). Use null if not printed. Never compute or guess a number.
-- openings: every door (box = the gap in the wall plus its swing arc), window (box = the window symbol on the wall), sliding / balcony door, or open archway in THIS room's walls. "main": true for the ONE door people enter by from the rest of the house (not a bathroom, toilet, balcony or wardrobe door).
+- openings: every door (box = the gap in the wall plus its swing arc), window (box = the window symbol on the wall; a sliding or "slider" window is still a window), sliding_door (a full-height sliding or balcony door only), or open archway in THIS room's walls. "main": true for the ONE door people enter by from the rest of the house (not a bathroom, toilet, balcony or wardrobe door).
 - items: EVERY furniture or fixture symbol drawn inside the room, one entry each (two side tables → two entries). Do not invent furniture that is not drawn. Dimension lines, text, hatching, columns and walls are not items.`;
 
 export function planReaderUser(hint?: string): string {
