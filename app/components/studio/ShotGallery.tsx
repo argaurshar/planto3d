@@ -39,6 +39,12 @@ interface Props {
   onRetake: (id: string) => void;
 }
 
+/** File extension for a data URL or remote image (Nano Banana often returns JPEG). */
+function ext(url: string): string {
+  const m = url.match(/^data:image\/(png|jpe?g|webp)/);
+  return m ? (m[1] === "jpeg" ? "jpg" : m[1]) : /\.jpe?g(\?|$)/i.test(url) ? "jpg" : "png";
+}
+
 function slug(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 }
@@ -128,7 +134,7 @@ function Card({ r, version, aiReady, aiName, blenderReady, onRealistic, onBlende
           )}
           <DownloadButton url={r.raw} filename={`${slug(r.label)}-3d.png`} label="3D shot" className="btn-outline min-h-0 px-3 py-1.5 text-xs" />
           {r.cycles && <DownloadButton url={r.cycles} filename={`${slug(r.label)}-blender.png`} label="Blender" className="btn-outline min-h-0 px-3 py-1.5 text-xs" />}
-          {r.real && <DownloadButton url={r.real} filename={`${slug(r.label)}-realistic.png`} label="Realistic" className="btn-outline min-h-0 px-3 py-1.5 text-xs" />}
+          {r.real && <DownloadButton url={r.real} filename={`${slug(r.label)}-realistic.${ext(r.real)}`} label="Realistic" className="btn-outline min-h-0 px-3 py-1.5 text-xs" />}
         </div>
       </figcaption>
     </figure>

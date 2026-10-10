@@ -215,3 +215,52 @@ function cap(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+
+/**
+ * The pieces a shot's camera actually sees (inside its frame, in front of it,
+ * not hidden by the shot). Occlusion is ignored: a piece behind the bed still
+ * counts. Used to tell the realistic pass exactly what is in the picture.
+ */
+export function itemsInView(room: RoomModel, shot: Shot, aspect = 4 / 3): Item[] {
+  const [px, py, pz] = shot.pos;
+  let fx = shot.target[0] - px;
+  let fy = shot.target[1] - py;
+  let fz = shot.target[2] - pz;
+  const fl = Math.hypot(fx, fy, fz) || 1;
+  fx /= fl;
+  fy /= fl;
+  fz /= fl;
+  // right = forward × up(0,1,0); up' = right × forward
+  let rx = -fz;
+  let rz = fx;
+  const rl = Math.hypot(rx, rz) || 1;
+  rx /= rl;
+  rz /= rl;
+  const ux = -rz * fy;
+  const uy = rz * fx - rx * fz;
+  const uz = rx * fy;
+  const tv = Math.tan(((shot.fov / 2) * Math.PI) / 180);
+  const th = tv * aspect;
+  const hidden = new Set(shot.hide);
+  const sees = (x: number, y: number, z: number) => {
+    const vx = x - px;
+    const vy = y - py;
+    const vz = z - pz;
+    const depth = vx * fx + vy * fy + vz * fz;
+    if (depth < 0.15) return false;
+    const sx = (vx * rx + vz * rz) / (depth * th);
+    const sy = (vx * ux + vy * uy + vz * uz) / (depth * tv);
+    return Math.abs(sx) <= 1 && sy >= -1 + shot.shiftY && sy <= 1 + shot.shiftY;
+  };
+  return room.items.filter((it) => {
+    if (hidden.has(`item:${it.id}`)) return false;
+    const r = footprint(it);
+    const y0 = it.elevation ?? 0;
+    for (let a = 0; a <= 4; a++)
+      for (let b = 0; b <= 4; b++)
+        for (let c = 0; c <= 2; c++) {
+          if (sees(r.x0 + ((r.x1 - r.x0) * a) / 4, y0 + (it.h * c) / 2, r.z0 + ((r.z1 - r.z0) * b) / 4)) return true;
+        }
+    return false;
+  });
+}

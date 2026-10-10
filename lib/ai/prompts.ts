@@ -8,6 +8,7 @@ import type { RoomModel, Shot } from "../room/types";
 import { CATALOG, ITEM_TYPES, itemLabel } from "../room/catalog";
 import { STYLES, STYLE_IDS, COLOR_WORDS } from "../room/styles";
 import { describeItem } from "../room/commands";
+import { itemsInView } from "../room/shots";
 
 export const PLAN_READER_SYSTEM = `You are an architect reading a 2D architectural floor plan image, measuring it precisely for a true-scale 3D model.
 The image shows ONE room to be modelled (if it shows several rooms, read the single largest room, or the room named in the user's hint).
@@ -77,22 +78,61 @@ export function commandUser(room: RoomModel, text: string, selectedId: string | 
   return `Room: ${JSON.stringify(compact)}\nSelected item: ${selectedId ?? "none"}\nRequest: ${text.slice(0, 500)}`;
 }
 
+const ROOM_WORDS: Record<RoomModel["kind"], string> = {
+  bedroom: "bedroom",
+  kids: "kids' bedroom",
+  living: "living room",
+  dining: "dining room",
+  kitchen: "kitchen",
+  bathroom: "bathroom",
+  study: "study",
+  other: "room",
+};
+
+/** The floor as a photographer would name it, matching the 3D model's material. */
+function floorWords(room: RoomModel): string {
+  const p = STYLES[room.style];
+  switch (room.floor) {
+    case "wood": {
+      // The plank colour the 3D floor is painted with, in words an image model keeps.
+      const tone: Record<string, string> = {
+        oak: "light honey-coloured oak",
+        "white-oak": "pale white oak",
+        ash: "very light ash",
+        teak: "medium golden teak",
+        walnut: "dark walnut",
+        wenge: "dark walnut",
+      };
+      return `${tone[p.woodAccent] ?? "light oak"} wood plank floor`;
+    }
+    case "tile":
+      return "large light porcelain floor tiles";
+    case "marble":
+      return "polished white marble floor";
+    default:
+      return "wall-to-wall beige carpet";
+  }
+}
+
 /**
  * Instruction for the realistic pass. The input image is a raw render of the
- * exact model; the model may change how things LOOK, never what or where they are.
+ * exact model; the model may change how things LOOK, never what or where they
+ * are. Only the pieces the camera really sees are named: naming a piece that
+ * is out of frame (or behind the camera) makes image models paint it in.
  */
 export function realisticPrompt(room: RoomModel, shot: Shot | null, extra = ""): string {
   const style = STYLES[room.style];
-  const pieces = room.items
-    .filter((i) => !(shot?.hide ?? []).includes(`item:${i.id}`))
-    .map((i) => `${describeItem(i)}${i.finish ? `, ${i.finish}` : ""}`)
-    .join("; ");
+  const visible = shot ? itemsInView(room, shot) : room.items;
+  const pieces = visible.map((i) => `${describeItem(i)}${i.finish ? `, ${i.finish}` : ""}`).join("; ");
+  const hasRug = visible.some((i) => i.type === "rug");
   return [
-    `Turn this 3D render into a real photograph of the same ${room.kind === "other" ? "room" : `${room.kind} room`}, taken by a professional interior photographer.`,
-    "It is a render of an exact, true-scale 3D model, so everything in it is already correct. Keep EXACTLY: the camera position, height, lens and framing; the walls, ceiling, floor and every door and window; every piece of furniture and decor — its position, size, shape, design, colour and pattern. Do not add, remove, move, resize or restyle anything, and do not add doors, windows, furniture, lamps, plants or art that are not in the render.",
+    `Turn this 3D render into a real photograph of the same ${ROOM_WORDS[room.kind]}, taken by a professional interior photographer.`,
+    "It is a render of an exact, true-scale 3D model, so everything in it is already correct. Keep EXACTLY: the camera position, height, lens and framing; the walls, ceiling, floor and every door and window; every piece of furniture and decor — its position, size, shape, design, colour and pattern. Do not add, remove, move, resize or restyle anything.",
+    pieces ? `The furniture in the picture is exactly this, and nothing else: ${pieces}.` : "There is no furniture in the picture; keep it that way.",
+    "Wherever the render shows plain wall, plain floor or plain ceiling, it stays plain: no cabinets, wardrobes, shelves, doors, windows, art, mirrors, plants, lamps or rugs are added anywhere.",
+    `Floor: a ${floorWords(room)}, exactly as light or dark as in the render, same plank direction${hasRug ? "" : ", no rug"}; do not darken or recolour it. Walls: the same paint colour as the render (${room.wallColor}).`,
     "Change only how it looks: real materials with true texture (wood grain, fabric weave, stone veining, paint), soft natural daylight from the windows with physically correct soft shadows, bounce light and ambient occlusion, gentle warm glow from the lights that are on, accurate reflections, subtle real-life detail (fabric creases, slight imperfections). Sharp focus, natural colour, straight verticals, high dynamic range.",
     `Style: ${style.describe}.`,
-    pieces ? `In view: ${pieces}.` : "",
     extra.trim() ? `Also: ${extra.trim().slice(0, 300)}` : "",
     "No people, no text, no watermark.",
   ]

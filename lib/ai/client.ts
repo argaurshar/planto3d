@@ -45,7 +45,7 @@ export function aiLabel(): string {
 
 export class NeedKeyError extends Error {
   constructor() {
-    super("Add your Google AI Studio key (AIza…) or kie.ai key at the bottom of the page to use AI.");
+    super("Add your Google AI Studio key or kie.ai key at the bottom of the page to use AI.");
   }
 }
 

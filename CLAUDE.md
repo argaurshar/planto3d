@@ -120,6 +120,9 @@ walls.
   - **Front** looks from the opposite wall, with that wall clipped.
   - **Corners** must be standable: on free floor, clear of tall furniture.
   - **Top** is the last shot.
+  - `itemsInView(room, shot)` lists the pieces inside a shot's frame
+    (projected box samples, hidden pieces excluded). The realistic prompt
+    names only those.
 - `geometry.ts`: footprints, `wallBehind`, `mainDoor`, `mainItem`,
   `itemsAgainst` and `formatSize` (m + ft).
 - `place.ts` decides where a new piece goes:
@@ -220,7 +223,14 @@ walls.
     the room JSON.
   - `realisticPrompt` keeps the camera, geometry and every piece exactly, and
     changes only materials and light.
-- `google.ts` (key `AIza…`) talks to the Gemini API `v1beta` and lists the
+    - It names only the pieces in frame (`itemsInView`). Naming an
+      out-of-frame piece made Nano Banana paint it in: a real plan's entry
+      shot gained the wardrobe that stands behind the camera.
+    - It says plain wall stays plain.
+    - It names the floor's tone ("light honey-coloured oak", from the style's
+      accent wood), and says no rug unless one is in view and do not darken
+      the floor.
+- `google.ts` (keys `AIza…` or the newer `AQ.…` form) talks to the Gemini API `v1beta` and lists the
   key's models to pick the best of each: reader = newest pro, fast = newest
   flash, image = best `gemini-*-image` (Nano Banana Pro first). `geminiText`
   uses JSON mode. `geminiImage` returns an image data URL, with 4:3 output and

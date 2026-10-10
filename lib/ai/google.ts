@@ -22,8 +22,10 @@ const FALLBACK: GoogleModels = { reader: "gemini-2.5-pro", fast: "gemini-2.5-fla
 
 const cache = new Map<string, Promise<GoogleModels>>();
 
+/** Google AI Studio keys: the classic "AIza…" form and the newer "AQ.…" form. */
 export function isGoogleKey(key: string): boolean {
-  return /^AIza[0-9A-Za-z_-]{20,}$/.test(key.trim());
+  const k = key.trim();
+  return /^AIza[0-9A-Za-z_-]{20,}$/.test(k) || /^AQ\.[0-9A-Za-z_.-]{20,}$/.test(k);
 }
 
 function friendly(status: number, msg: string): string {
@@ -52,7 +54,7 @@ function version(name: string): number {
   return m ? parseFloat(m[1]) : 0;
 }
 
-const NOT_TEXT = /image|tts|audio|live|embedding|aqa|imagen|veo|learnlm|gemma|robotics|computer-use|native|thinking-exp|nano|lyria/;
+const NOT_TEXT = /image|tts|audio|live|embedding|aqa|imagen|veo|learnlm|gemma|robotics|computer-use|native|thinking-exp|nano|lyria|transcribe|translate|customtools|omni|research|antigravity/;
 
 function rankText(names: string[], prefer: "pro" | "flash"): string | null {
   const scored = names
@@ -71,7 +73,7 @@ function rankText(names: string[], prefer: "pro" | "flash"): string | null {
 function rankImage(names: string[]): string | null {
   const scored = names
     .filter((n) => n.startsWith("gemini-") && /image/.test(n) && !/imagen|generation-exp/.test(n))
-    .map((n) => ({ n, s: version(n) * 10 + (/pro/.test(n) ? 4 : 2) - (/exp/.test(n) ? 3 : 0) }))
+    .map((n) => ({ n, s: version(n) * 10 + (/pro/.test(n) ? 4 : /lite/.test(n) ? 1 : 2) - (/exp/.test(n) ? 3 : 0) - (/preview/.test(n) ? 0.1 : 0) }))
     .sort((a, b) => b.s - a.s);
   return scored[0]?.n ?? null;
 }

@@ -6,7 +6,7 @@ import { isGoogleKey } from "@/lib/ai/google";
 
 /**
  * Bottom-of-page AI key. One field takes either a Google AI Studio key
- * (AIza…, calls Gemini + Nano Banana directly) or a kie.ai key. The key is
+ * (AIza… or AQ.…, calls Gemini + Nano Banana directly) or a kie.ai key. The key is
  * kept only in this browser (localStorage) and sent only to that provider.
  */
 export default function KeyManager() {
@@ -56,7 +56,7 @@ export default function KeyManager() {
           save(key);
         }}
       >
-        <input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="AIza… (Google) or your kie.ai key" className="input min-w-0 flex-1" autoComplete="off" />
+        <input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="Google AI Studio key (AIza… or AQ.…) or kie.ai key" className="input min-w-0 flex-1" autoComplete="off" />
         <button type="submit" disabled={!key.trim()} className="btn-primary">
           Save
         </button>
