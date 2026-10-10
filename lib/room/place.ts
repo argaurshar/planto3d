@@ -9,14 +9,18 @@ import { CATALOG } from "./catalog";
 import {
   type Rect,
   WALLS,
+  ceilingAt,
   clamp,
   dirVec,
   facingAwayFrom,
   footprint,
+  itemsAgainst,
   mainItem,
+  onFloor,
   opposite,
   rectsOverlap,
   round2,
+  verticalSpan,
   wallBehind,
   wallOfDir,
 } from "./geometry";
@@ -69,7 +73,7 @@ function zoneInFront(room: RoomModel, wall: Wall, offset: number, width: number,
 function standing(room: RoomModel, except: Set<string>): Rect[] {
   return room.items
     .filter((it) => !except.has(it.id))
-    .filter((it) => !CATALOG[it.type].flat && !CATALOG[it.type].wallMounted)
+    .filter((it) => onFloor(it.type))
     .map((it) => footprint(it));
 }
 
@@ -95,7 +99,7 @@ export function settle(room: RoomModel): RoomModel {
   let changed = false;
   const items = room.items.map((it) => {
     const cat = CATALOG[it.type];
-    if (cat.wallMounted || cat.flat) return it;
+    if (cat.wallMounted || cat.flat || cat.ceilingMounted) return it;
     const wall = wallOfDir(opposite(it.facing));
     const r = footprint(it);
     const horizontal = wall === "top" || wall === "bottom";
@@ -214,6 +218,12 @@ function sizeFor(room: RoomModel, type: ItemType, variant: string): { w: number;
   if (type === "sofa" && variant === "l-shape") s.d = 1.6;
   if (type === "wardrobe" && variant === "hinged-loft") s.h = Math.min(ceilingClear(room) - 0.02, 2.7);
   if (type === "tvUnit" && variant === "panel") s.h = 0.45;
+  if (type === "ceilingFan") {
+    // Sweep by floor area: 900 mm for a small room, 1200 standard, 1400 for a large one.
+    const area = room.width * room.depth;
+    s.w = s.d = area < 9 ? 0.9 : area > 20 ? 1.4 : 1.2;
+    if (variant === "light") s.h = 0.3;
+  }
   return s;
 }
 
@@ -234,7 +244,7 @@ export function placeNew(
   const sofa = opts.near?.type === "sofa" ? opts.near : room.items.find((i) => i.type === "sofa") ?? null;
   const out: Placement[] = [];
 
-  if (opts.wall && type !== "bedBack" && type !== "artwork" && type !== "mirror") {
+  if (opts.wall && type !== "bedBack" && type !== "artwork" && type !== "mirror" && type !== "ac" && type !== "ceilingFan") {
     const p = CATALOG[type].againstWall ? fitOnWall(room, opts.wall, size) : fitFree(room, size, centreNearWall(room, opts.wall, 1.2), facingAwayFrom(opts.wall));
     return p ? [p] : [];
   }
@@ -374,6 +384,37 @@ export function placeNew(
       }
       break;
     }
+    case "ceilingFan": {
+      // Over the middle of the room; in a long room, over the bed or the seating along its length.
+      const anchor = bed ?? sofa;
+      const long = Math.max(room.width, room.depth) > 1.35 * Math.min(room.width, room.depth);
+      let x = room.width / 2;
+      let z = room.depth / 2;
+      if (anchor && long) {
+        if (room.depth > room.width) z = anchor.z;
+        else x = anchor.x;
+      }
+      const r = size.w / 2 + 0.3;
+      x = clamp(x, Math.min(r, room.width / 2), Math.max(room.width - r, room.width / 2));
+      z = clamp(z, Math.min(r, room.depth / 2), Math.max(room.depth - r, room.depth / 2));
+      return [{ x: round2(x), z: round2(z), ...size, facing: "down" }];
+    }
+    case "ac": {
+      // High on a wall, blowing across the room: the wall the bed (or sofa) faces
+      // first, then the side walls, its own back wall last.
+      const anchor = bed ?? sofa ?? main;
+      const walls = opts.wall
+        ? [opts.wall]
+        : anchor
+          ? [wallOfDir(anchor.facing), ...WALLS.filter((w) => w !== wallOfDir(anchor.facing) && w !== wallOfDir(opposite(anchor.facing))), wallOfDir(opposite(anchor.facing))]
+          : wallsBySpace(room);
+      for (const w of walls) {
+        const prefer = anchor ? (w === "top" || w === "bottom" ? anchor.x : anchor.z) : wallLen(room, w) / 2;
+        const p = highOnWall(room, w, size, prefer);
+        if (p) return [p];
+      }
+      break;
+    }
     case "bench":
     case "ottoman": {
       if (type === "bench" && bed) {
@@ -467,6 +508,33 @@ function centreNearWall(room: RoomModel, wall: Wall, inset: number): [number, nu
     default:
       return [room.width - inset, room.depth / 2];
   }
+}
+
+/**
+ * A spot high on a wall for a split AC: its top 15 cm under the ceiling, clear
+ * of every door and window on that wall and of anything tall standing or hung
+ * there (wardrobe, bed back panel), nearest `prefer` along the wall.
+ */
+function highOnWall(room: RoomModel, wall: Wall, size: { w: number; d: number; h: number }, prefer: number): Placement | null {
+  const L = wallLen(room, wall);
+  const horizontal = wall === "top" || wall === "bottom";
+  const probe = againstWallAt(room, wall, L / 2, size.d, 0);
+  const y0 = round2(Math.max(1.9, ceilingAt(room, probe.x, probe.z) - 0.15 - size.h));
+  const blocked: [number, number][] = [];
+  for (const o of room.openings) if (o.wall === wall) blocked.push([o.offset - o.width / 2 - 0.15, o.offset + o.width / 2 + 0.15]);
+  for (const it of itemsAgainst(room, wall, 0.3)) {
+    if (verticalSpan(room, it)[1] <= y0 - 0.05) continue;
+    const r = footprint(it);
+    blocked.push(horizontal ? [r.x0 - 0.05, r.x1 + 0.05] : [r.z0 - 0.05, r.z1 + 0.05]);
+  }
+  const half = size.w / 2 + 0.1;
+  const cands: number[] = [];
+  for (let a = half + 0.05; a <= L - half - 0.05 + 1e-6; a += 0.05) cands.push(a);
+  cands.sort((p, q) => Math.abs(p - prefer) - Math.abs(q - prefer));
+  const a = cands.find((c) => blocked.every(([b0, b1]) => c + half <= b0 || c - half >= b1));
+  if (a === undefined) return null;
+  const c = againstWallAt(room, wall, a, size.d, 0);
+  return { x: round2(c.x), z: round2(c.z), ...size, facing: c.facing, elevation: y0 };
 }
 
 export function dirFromVec(v: [number, number]): Dir {

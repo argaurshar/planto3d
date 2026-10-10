@@ -7,6 +7,7 @@ import type { Palette } from "../styles";
 import { artwork, armchair, bookshelf, coffeeTable, floorLamp, mirror, ottoman, plant, rug, sideTable, sideboard, sofa, tvUnit } from "./living";
 import { bed, bedBack, bench, dresser, nightstand, wardrobe } from "./bedroom";
 import { bathtub, chair, desk, diningSet, fridge, genericBox, kitchenCounter, shower, toilet, vanity } from "./other";
+import { ac, ceilingFan } from "./fixtures";
 
 type Group = import("three").Group;
 
@@ -51,6 +52,8 @@ const BUILDERS: Record<ItemType, Builder> = {
   shower,
   bathtub,
   bench,
+  ceilingFan,
+  ac,
   other: genericBox,
 };
 
@@ -75,7 +78,9 @@ export function buildItem(c: BuildCtx, it: Item): Group {
   g.userData.itemId = it.id;
   const build = BUILDERS[it.type] ?? genericBox;
   build(c, it, g);
-  g.position.set(it.x, it.type === "artwork" || it.type === "mirror" ? 0 : it.elevation ?? 0, it.z);
+  // These builders set their own height (hung on the wall, or from the ceiling).
+  const selfLifted = it.type === "artwork" || it.type === "mirror" || it.type === "ac" || it.type === "ceilingFan";
+  g.position.set(it.x, selfLifted ? 0 : it.elevation ?? 0, it.z);
   g.rotation.y = facingRotation(it.facing);
   // Every mesh knows which item it belongs to, for click-to-select.
   g.traverse((o) => {

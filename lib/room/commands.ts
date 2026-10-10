@@ -13,7 +13,7 @@ import { COLOR_WORDS, STYLES, STYLE_IDS } from "./styles";
 import { clamp, dirVec, footprint, mainItem, opposite, round2, wallOfDir } from "./geometry";
 import { againstWallAt, clampInside, dirFromVec, fitOnWall, newId, placeNew, settle, wallLen } from "./place";
 import { WALL_CLEAR } from "./constants";
-import { resizeRoom } from "./planFit";
+import { nearestWallAt, resizeRoom } from "./planFit";
 
 // ---------------------------------------------------------------- operations
 
@@ -324,7 +324,15 @@ export function applyOps(room0: RoomModel, ops: Op[]): ApplyResult {
           if (z !== undefined) it.z = z;
           if (op.dx) it.x += clamp(op.dx, -20, 20);
           if (op.dz) it.z += clamp(op.dz, -20, 20);
-          if (x !== undefined || z !== undefined || op.dx || op.dz) notes.add("moved");
+          if (x !== undefined || z !== undefined || op.dx || op.dz) {
+            notes.add("moved");
+            // A wall-hung piece slides along the walls: it lands on the wall nearest where it was dropped.
+            if (CATALOG[it.type].wallMounted) {
+              const { wall, offset } = nearestWallAt(room, it.x, it.z);
+              const c = againstWallAt(room, wall, clamp(offset, it.w / 2, wallLen(room, wall) - it.w / 2), it.d, 0);
+              it = { ...it, x: round2(c.x), z: round2(c.z), facing: c.facing };
+            }
+          }
           it = clampInside(room, it);
           room = { ...room, items: room.items.map((i) => (i.id === it.id ? it : i)) };
         }

@@ -59,6 +59,8 @@ export type ItemType =
   | "shower"
   | "bathtub"
   | "bench"
+  | "ceilingFan"
+  | "ac"
   | "other";
 
 /**
@@ -82,7 +84,7 @@ export interface Item {
   facing: Dir;
   /** Free label shown to the user (e.g. "study chair"); defaults to the catalog label. */
   label?: string;
-  /** Height above the floor of the item's bottom (wall-hung units, artwork). */
+  /** Height above the floor of the item's bottom (wall-hung units, artwork, a split AC). */
   elevation?: number;
 }
 

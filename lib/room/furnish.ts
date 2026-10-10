@@ -16,6 +16,8 @@ const LAYOUTS: Record<RoomKind, Op[]> = {
     { op: "add", type: "tvUnit" },
     { op: "add", type: "rug" },
     { op: "add", type: "plant" },
+    { op: "add", type: "ceilingFan" },
+    { op: "add", type: "ac" },
   ],
   kids: [
     { op: "add", type: "bed", variant: "storage" },
@@ -23,6 +25,8 @@ const LAYOUTS: Record<RoomKind, Op[]> = {
     { op: "add", type: "wardrobe" },
     { op: "add", type: "desk" },
     { op: "add", type: "rug", variant: "round" },
+    { op: "add", type: "ceilingFan" },
+    { op: "add", type: "ac" },
   ],
   living: [
     { op: "add", type: "sofa" },
@@ -34,6 +38,8 @@ const LAYOUTS: Record<RoomKind, Op[]> = {
     { op: "add", type: "floorLamp" },
     { op: "add", type: "plant" },
     { op: "add", type: "artwork", variant: "triptych" },
+    { op: "add", type: "ceilingFan" },
+    { op: "add", type: "ac" },
   ],
   dining: [
     { op: "add", type: "diningSet" },
@@ -56,6 +62,8 @@ const LAYOUTS: Record<RoomKind, Op[]> = {
     { op: "add", type: "armchair" },
     { op: "add", type: "rug" },
     { op: "add", type: "plant" },
+    { op: "add", type: "ceilingFan" },
+    { op: "add", type: "ac" },
   ],
   other: [
     { op: "add", type: "sofa" },

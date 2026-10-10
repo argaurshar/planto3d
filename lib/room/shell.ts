@@ -14,6 +14,7 @@ type Group = import("three").Group;
 type Object3D = import("three").Object3D;
 
 import { FALSE_CEILING_DROP, SKIRT_H, WALL_T } from "./constants";
+import { falseCeilingBand } from "./geometry";
 export { FALSE_CEILING_DROP, SKIRT_H, WALL_T };
 
 /** Length of a wall along its own axis (x for top/bottom, z for left/right). */
@@ -266,7 +267,7 @@ function buildCeiling(c: BuildCtx, g: Group): void {
     return;
   }
   const drop = FALSE_CEILING_DROP;
-  const band = Math.min(0.65, Math.min(room.width, room.depth) * 0.18);
+  const band = falseCeilingBand(room);
   const y = H - drop;
   const W = room.width;
   const D = room.depth;

@@ -163,7 +163,25 @@ export default function PlanCheck({ room, image, selectedId, onSelect, onMoveIte
     const [x1, y1] = toPlan(r, f, fp.x1, fp.z1);
     const sel = it.id === selectedId;
     const cat = CATALOG[it.type];
-    const color = sel ? "#f59e0b" : cat.wallMounted ? "#8b5cf6" : "#10b981";
+    const color = sel ? "#f59e0b" : cat.wallMounted || cat.ceilingMounted ? "#8b5cf6" : "#10b981";
+    if (cat.ceilingMounted) {
+      // A fan is drawn as its sweep, the way plans draw it.
+      const rx = (x1 - x0) / 2;
+      const ry = (y1 - y0) / 2;
+      return (
+        <g key={it.id} data-kind="item" data-id={it.id} style={{ cursor: "move" }}>
+          {/* Grabbed by its ring or its hub, so the piece under it stays draggable. */}
+          <ellipse cx={(x0 + x1) / 2} cy={(y0 + y1) / 2} rx={rx} ry={ry} fill={color} fillOpacity={0.08 * strength} stroke={color} strokeOpacity={Math.min(1, strength + 0.15)} strokeWidth={sel ? 2.5 : 1.5} strokeDasharray="4 3" vectorEffect="non-scaling-stroke" style={{ pointerEvents: "none" }} />
+          <ellipse cx={(x0 + x1) / 2} cy={(y0 + y1) / 2} rx={rx} ry={ry} fill="none" stroke="transparent" strokeWidth={14} vectorEffect="non-scaling-stroke" style={{ pointerEvents: "stroke" }} />
+          <ellipse cx={(x0 + x1) / 2} cy={(y0 + y1) / 2} rx={rx * 0.14} ry={ry * 0.14} fill={color} fillOpacity={0.5 * strength} stroke="none" />
+          {labels && (
+            <text x={(x0 + x1) / 2} y={(y0 + y1) / 2 + ry * 0.3} fontSize={fs * 0.8} textAnchor="middle" dominantBaseline="central" fill={sel ? "#92400e" : "#5b21b6"} stroke="#fff" strokeWidth={fs * 0.25} strokeOpacity={0.85} style={{ paintOrder: "stroke", pointerEvents: "none", fontWeight: 600 }}>
+              {it.label ?? itemLabel(it.type)}
+            </text>
+          )}
+        </g>
+      );
+    }
     // The front edge, drawn heavy, shows which way the piece faces.
     const front: [number, number, number, number] =
       at.facing === "down" ? [x0, y1, x1, y1] : at.facing === "up" ? [x0, y0, x1, y0] : at.facing === "left" ? [x0, y0, x0, y1] : [x1, y0, x1, y1];
@@ -244,7 +262,8 @@ export default function PlanCheck({ room, image, selectedId, onSelect, onMoveIte
           <>
             <rect x={box[0]} y={box[1]} width={box[2] - box[0]} height={box[3] - box[1]} fill="#10b981" fillOpacity={0.04 * strength} stroke="#059669" strokeWidth={2} strokeDasharray="8 5" vectorEffect="non-scaling-stroke" />
             {shown.items.filter((i) => CATALOG[i.type].flat).map((it) => itemShape(it, shown, shown.plan!))}
-            {shown.items.filter((i) => !CATALOG[i.type].flat).map((it) => itemShape(it, shown, shown.plan!))}
+            {shown.items.filter((i) => !CATALOG[i.type].flat && !CATALOG[i.type].ceilingMounted).map((it) => itemShape(it, shown, shown.plan!))}
+            {shown.items.filter((i) => CATALOG[i.type].ceilingMounted).map((it) => itemShape(it, shown, shown.plan!))}
             {shown.openings.map((o) => openingShape(o, shown, shown.plan!))}
             {labels && (
               <>
@@ -291,7 +310,7 @@ export default function PlanCheck({ room, image, selectedId, onSelect, onMoveIte
           </div>
           <div className="hidden items-center gap-2 rounded-full bg-black/65 px-3 py-1 sm:flex">
             <span className="flex items-center gap-1"><i className="inline-block h-2 w-3 rounded-sm bg-emerald-500" /> furniture</span>
-            <span className="flex items-center gap-1"><i className="inline-block h-2 w-3 rounded-sm bg-violet-500" /> on the wall</span>
+            <span className="flex items-center gap-1"><i className="inline-block h-2 w-3 rounded-sm bg-violet-500" /> wall / ceiling</span>
             <span className="flex items-center gap-1"><i className="inline-block h-1 w-3 bg-orange-500" /> door</span>
             <span className="flex items-center gap-1"><i className="inline-block h-1 w-3 bg-sky-500" /> window</span>
           </div>

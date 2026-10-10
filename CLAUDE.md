@@ -56,7 +56,8 @@ build 3D", or skip the AI and enter the size) → `studio`:
   view stays mounted, so shots still work). It is an SVG over the plan in
   image pixels:
   - The dashed outline is the walls. Furniture is green with its front edge
-    drawn heavy, wall-hung pieces are violet, doors orange, windows blue.
+    drawn heavy, wall-hung pieces are violet, a ceiling fan is a dashed sweep
+    circle, doors are orange and windows blue.
   - Drag a piece to move it (an `update` op). Drag a door or window onto any
     wall (`placeOpening`). Drag the outline's handles onto the drawing's inner
     wall lines (`refitPlan`, previewed live).
@@ -98,8 +99,10 @@ walls.
   with the model).
 - `catalog.ts` defines every `ItemType`: its label, aliases used for commands
   and plan labels (longest alias wins, so "bed back" is not "bed"), standard
-  size, plausible size range, `againstWall` / `wallMounted` / `flat`, material
-  role and design variants. It also holds `MAIN_ITEM_ORDER` (what "main
+  size, plausible size range, `againstWall` / `wallMounted` / `flat` /
+  `ceilingMounted`, material role and design variants. A ceiling fan
+  (`ceilingFan`: its `w`/`d` are the sweep, `h` the drop) hangs from the
+  ceiling; a split AC (`ac`) is wall-mounted at an `elevation`. It also holds `MAIN_ITEM_ORDER` (what "main
   element" means per room kind) and `kindFromWords`.
 - `styles.ts`: five style palettes (`modern-warm`, `scandinavian`, `luxury`,
   `minimal`, `indian-contemporary`), plus colour and wood words.
@@ -114,9 +117,12 @@ walls.
   pinched to a seam, with the sides drawn in. Beds are dressed with sleeping
   pillows leaning on the headboard, a square cushion in front of each, and a
   lumbar cushion; the old tube-shaped rounded boxes read as bones.
-- `furniture/{bedroom,living,other}.ts` hold one builder per type and
-  variant, in a local frame (front +z). `furniture/index.ts` `buildItem`
-  names each group `item:<id>`.
+- `furniture/{bedroom,living,other,fixtures}.ts` hold one builder per type
+  and variant, in a local frame (front +z). `fixtures.ts` has the ceiling fan
+  (three blades on a downrod, four wooden blades, or flush with a light) and
+  the split AC (classic rounded or slim). Both set their own height: the fan
+  hangs from the ceiling over its spot, the AC never goes into the ceiling.
+  `furniture/index.ts` `buildItem` names each group `item:<id>`.
 - `shell.ts` builds the floor, walls of real thickness with openings cut in
   (frames, leaves, glass, sills, an exterior backdrop), skirting, curtains, the
   ceiling and an optional false ceiling with cove and downlights, plus
@@ -141,12 +147,20 @@ walls.
     hidden: the "clipping camera".
   - **Front** looks from the opposite wall, with that wall clipped.
   - **Corners** must be standable: on free floor, clear of tall furniture.
-  - **Top** is the last shot.
+    Ceiling pieces do not block a spot.
+  - **Top** is the last shot. It hides ceiling fans, which hang between the
+    camera and the plan.
   - `itemsInView(room, shot)` lists the pieces inside a shot's frame
     (projected box samples, hidden pieces excluded). The realistic prompt
     names only those.
 - `geometry.ts`: footprints, `wallBehind`, `mainDoor`, `mainItem`,
-  `itemsAgainst` and `formatSize` (m + ft).
+  `itemsAgainst`, `formatSize` (m + ft), plus the vertical helpers:
+  - `onFloor(type)` is false for rugs and for wall- or ceiling-hung pieces.
+  - `ceilingAt(room, x, z)` gives the false ceiling band or the true ceiling
+    (`falseCeilingBand` is shared with `shell.ts`).
+  - `ceilingDrop` shortens a fan's drop so its blades stay above
+    `FAN_CLEAR` (2.3 m).
+  - `verticalSpan(room, it)` gives a piece's bottom and top.
 - `planFit.ts` keeps the model and its plan in step:
   - `toPlan` / `fromPlan` map metres to plan-image pixels and back. The box
     maps the whole room, so the overlay stays aligned after a resize.
@@ -163,6 +177,12 @@ walls.
     bed's head.
   - A wardrobe goes on a side wall, in the foot-end corner. A TV unit faces the
     bed or sofa, and a coffee table sits in front of the sofa.
+  - A ceiling fan goes over the middle of the room, or over the bed or
+    seating along a long room. Its sweep is 900, 1200 or 1400 mm by floor
+    area.
+  - A split AC goes high on a wall (`highOnWall`: its top 15 cm under the
+    ceiling). It tries the wall the bed or sofa faces first, then the sides,
+    staying clear of doors, windows and anything tall on that wall.
   - `fits` keeps pieces out of door swings and keeps tall pieces away from
     windows.
   - `settle` pushes pieces in front of a wall-hung panel.
@@ -174,7 +194,8 @@ walls.
   20'").
   Clause splitting keeps the verb across "and" ("add a bed back and side
   tables"). "that/it" means the selection, or the last piece touched. "move
-  the bed back" means backwards.
+  the bed back" means backwards. A moved wall-hung piece (AC, art, mirror,
+  panel) lands on the wall nearest where it was dropped.
 - `read.ts`: `readingToRoom(reading, imageSize, hint)` turns the AI's plan
   reading into the model:
   - Scale comes from the printed dimensions, parsed by `parseDimension` (12'0",
@@ -186,9 +207,11 @@ walls.
     balcony / french door) is full height.
   - The room box is kept as `room.plan` for the plan check view.
   - Each piece is typed, sized into its catalog range, faced (bed `head`,
-    `front`, or its nearest wall) and pushed flush.
+    `front`, or its nearest wall) and pushed flush. A fan symbol is its sweep
+    circle, and an AC gets its elevation under the ceiling.
 - `furnish.ts`: `autoFurnish` gives a standard layout per room kind using the
-  same placement. `blankRoom` makes an empty room.
+  same placement. Bedrooms, kids' rooms, living rooms and studies include a
+  ceiling fan and a split AC. `blankRoom` makes an empty room.
 - `samples.ts`: a sample bedroom (12′×14′) and a sample living room
   (4.5×5.5 m).
 - `blender.ts` builds what Blender needs:
@@ -315,7 +338,7 @@ blender-server/
 types/assets.d.ts            # *.py imported as text
 lib/
   room/   types catalog styles materials kit constants geometry shell scene viewport
-          shots place planFit commands read furnish samples blender renderServer  furniture/{index,bedroom,living,other}
+          shots place planFit commands read furnish samples blender renderServer  furniture/{index,bedroom,living,other,fixtures}
   ai/     client run google kie kiePoll prompts
   planFile.ts  download.ts  imageProxy.ts
 ```
