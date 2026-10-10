@@ -32,6 +32,9 @@ drawing is cropped with a box). The app:
    Banana with "keep everything exactly; change only materials and light".
 6. **Download for Blender**: `room.glb` + `render_in_blender.py` (cameras,
    lights, Cycles) + `room.json`, zipped.
+7. **Render in Blender** (optional): any shot is rendered with real Blender
+   Cycles on the user's own render server (`blender-server/`), from the same
+   model and the same camera.
 
 **Principle:** the `RoomModel` is the single source of truth. The live view,
 every shot, every edit, the realistic pass and the Blender export are built
@@ -58,9 +61,11 @@ build 3D", or skip the AI and enter the size) → `studio`:
 - `studio/RoomPanel.tsx` edits the name, kind, style, size, wall colour,
   floor, false ceiling and curtains, plus doors and windows (kind, wall, centre
   offset, width, sill, main door).
-- `studio/ShotGallery.tsx` shows the captured shots. Each has "Make
-  realistic" with an optional direction, a raw ↔ realistic compare slider,
-  downloads, and "Retake with changes" when the model has changed since.
+- `studio/ShotGallery.tsx` shows the captured shots. Each has "🎬 Render in
+  Blender" (Draft or Final, with progress), "Make realistic" with an optional
+  direction, a compare slider against the raw shot (toggle between Blender and
+  AI results when both exist), downloads, and "Retake with changes" when the
+  model has changed since.
 - State: a reducer with `room`, `past`, `future`, `version`, `selectedId` and
   `lastId` (up to 80 undo steps). The room autosaves to localStorage
   (`planto3d_room_v1`). Preset shots follow the model: move the bed and the
@@ -146,16 +151,63 @@ walls.
   same placement. `blankRoom` makes an empty room.
 - `samples.ts`: a sample bedroom (12′×14′) and a sample living room
   (4.5×5.5 m).
-- `blender.ts` builds the Blender package:
+- `blender.ts` builds what Blender needs:
   - `roomGlb` uses GLTFExporter on the same scene.
-  - `blenderScript` writes Python that imports the GLB, creates a camera per
-    shot (vertical FOV, lens shift, clip start that cuts away walls behind the
-    camera), lights collected from the scene (sun, window and cove area
-    lights, downlights, lamps), the world and Cycles/AgX settings, and a
-    `-- --render [--samples N] [--percent P] [ids]` loop that also hides each
-    shot's `hide` list.
+  - `sceneData` gives the cameras (vertical FOV, lens shift, a clip start
+    just past the inner face of the wall a camera stands behind) and the lights
+    collected from the scene (sun, window and cove area lights, downlights,
+    lamps), in Blender coordinates.
+  - `blenderScript` writes `render_in_blender.py` for the download: a
+    `DATA_JSON` raw string with the scene data, followed by
+    `blender-server/voxa_render.py`. That file is imported as text
+    (`next.config.js` treats `*.py` as `asset/source`; `types/assets.d.ts`
+    declares it), so the download and the render server run the same script.
+  - `renderJobZip(room, shots)` is the render-server job: `room.glb` +
+    `scene.json` only, never a script.
   - A dependency-free store-only `zip`.
-  - Verified with real Blender 5.0 (bpy) Cycles renders.
+- `renderServer.ts` is the browser client for the render server:
+  - The URL and token live in localStorage (`planto3d_render_server`). The URL
+    can also come from `NEXT_PUBLIC_BLENDER_SERVER_URL`. The token is never
+    built in.
+  - It offers `serverHealth`, and `renderInBlender(room, shot, quality,
+    onStatus)`, which packs, posts, polls and returns a PNG data URL.
+  - `QUALITIES`: Draft is 48 samples at 60 %, Final is 256 samples at 100 %.
+
+## Blender render server (blender-server/)
+
+- `voxa_render.py` is the one Blender script. It takes `--render`,
+  `--samples`, `--percent`, `--time-limit`, `--device auto|cpu|gpu`, `--job`,
+  `--glb`, `--out` and shot ids.
+  - It imports the GLB, adds the cameras, lights, world and Cycles/AgX
+    settings, and renders with the best GPU (OptiX, CUDA, HIP, oneAPI, Metal),
+    else the CPU.
+  - When rendering, it hides each shot's `hide` list. Interactively, a
+    `depsgraph_update_post` handler hides that list whenever the active camera
+    changes.
+  - It prints `VOXA_DEVICE` and `VOXA_RENDERED <id>` for the server.
+- `server.py` uses the standard library only.
+  - Routes: `POST /jobs?shots=&samples=&percent=` (a zip containing only
+    `room.glb` and `scene.json`, validated and rebuilt field by field; it
+    never runs uploaded code), `GET /jobs/<id>`, `GET /jobs/<id>/<shot>.png`
+    and `GET /health`.
+  - It runs one job at a time as a subprocess: the `bpy` module, or
+    `BLENDER_BIN`.
+  - It enforces a bearer `RENDER_TOKEN` and `ALLOWED_ORIGINS` CORS, plus size,
+    samples and queue limits, a per-job timeout, and a TTL cleanup.
+- `smoke_test.py` builds a tiny GLB with Blender, checks that a bad token and
+  a bad upload are refused, then renders one shot and checks the PNG.
+- `Dockerfile`: `python:3.11-slim-bookworm` + the X11/GL libraries +
+  `bpy==5.0.1`, run as a non-root user on port 8080.
+- `.github/workflows/render-server.yml` builds the image, runs
+  `smoke_test.py` inside it, and on `main` pushes
+  `ghcr.io/<owner>/<repo>-render`.
+- Hosting is in `blender-server/README.md`. The recommended host is Cloud Run
+  with an L4 GPU, with `--max-instances 1` (jobs live in memory) and
+  `--no-cpu-throttling` (renders continue after the POST returns).
+- Verified: the app → server → Cycles round trip, the smoke test, and the
+  downloaded package, all run against bpy 5.0.1 on Python 3.11. The Docker
+  image build itself is verified only by the CI workflow (no Docker daemon in
+  the dev sandbox).
 
 ## AI (lib/ai) — three jobs only
 
@@ -207,9 +259,13 @@ app/
   components/
     StartScreen.tsx  PlanStep.tsx  KeyManager.tsx  CompareSlider.tsx  DownloadButton.tsx
     studio/  Viewport3D.tsx  ShotBar.tsx  CommandBar.tsx  ElementsPanel.tsx  RoomPanel.tsx  ShotGallery.tsx
+    RenderServerManager.tsx   # footer: Blender render server URL + token, Test & save
+blender-server/
+  voxa_render.py  server.py  smoke_test.py  Dockerfile  README.md
+types/assets.d.ts            # *.py imported as text
 lib/
   room/   types catalog styles materials kit constants geometry shell scene viewport
-          shots place commands read furnish samples blender  furniture/{index,bedroom,living,other}
+          shots place commands read furnish samples blender renderServer  furniture/{index,bedroom,living,other}
   ai/     client run google kie kiePoll prompts
   planFile.ts  download.ts  imageProxy.ts
 ```
@@ -241,6 +297,9 @@ call `RoomViewport.capture` and save the PNGs.
   call runs in the browser with the visitor's key. Google's Gemini API allows
   browser calls. kie.ai calls depend on kie.ai CORS.
 - `.github/workflows/ci.yml` runs lint, typecheck and build.
+  `.github/workflows/render-server.yml` builds and smoke-tests the render
+  server image. `pages.yml` passes the repo variable `BLENDER_SERVER_URL` in
+  as `NEXT_PUBLIC_BLENDER_SERVER_URL`.
 
 ## Conventions
 
@@ -264,9 +323,10 @@ call `RoomViewport.capture` and save the PNGs.
   yet.
 - **One room at a time:** the whole-house model of the old pipeline was
   removed with it.
-- **Real Blender rendering in the app** would need a render server (Blender
-  on a GPU host) behind `/api`. Today the app exports a package that renders
-  in the user's Blender.
+- **Render server hosting** is the user's: the repo ships the server, the
+  image and the deploy guide, but someone must create the GPU host (for
+  example Cloud Run) and set `RENDER_TOKEN` / `ALLOWED_ORIGINS`. Jobs live in
+  memory, so it runs as a single instance.
 - **Plan reading accuracy** depends on the drawing. Low-contrast scans or
   plans without printed dimensions get an estimated scale, flagged in the UI.
 - **Shots/realistic history** is in memory. Only the room model autosaves.

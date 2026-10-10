@@ -15,8 +15,8 @@ import type { RoomModel, Shot } from "./types";
 import { loadThree } from "./kit";
 import { buildRoomScene } from "./scene";
 import { roomShots } from "./shots";
-import { footprint } from "./geometry";
 import { WALL_T } from "./constants";
+import VOXA_RENDER_PY from "@/blender-server/voxa_render.py";
 
 /** Plan/three coordinates → Blender (glTF import turns y-up into z-up). */
 function bl(x: number, y: number, z: number): [number, number, number] {
@@ -25,9 +25,10 @@ function bl(x: number, y: number, z: number): [number, number, number] {
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
 /**
- * Blender has no per-camera hide, so a shot taken from behind a wall uses the
- * camera's clip start instead: everything nearer than the wall's inner face
- * (and what stands against it) is cut away — Blender's own "clipping camera".
+ * A shot taken from behind a wall must not see that wall: the camera's clip
+ * start cuts everything nearer than the wall's inner face. What hangs or stands
+ * against that wall is hidden per camera by the script instead (clipping it
+ * would also slice a sofa or headboard standing a few centimetres off the wall).
  */
 function clipStart(room: RoomModel, s: Shot): number {
   const fx = s.target[0] - s.pos[0];
@@ -37,22 +38,15 @@ function clipStart(room: RoomModel, s: Shot): number {
   const along = (x: number, z: number) => (x - s.pos[0]) * f[0] + (z - s.pos[2]) * f[1];
   let clip = 0.05;
   for (const name of s.hide) {
-    if (name.startsWith("wall:")) {
-      const w = name.slice(5);
-      const d = w === "top" ? along(s.pos[0], 0) : w === "bottom" ? along(s.pos[0], room.depth) : w === "left" ? along(0, s.pos[2]) : along(room.width, s.pos[2]);
-      if (d > 0) clip = Math.max(clip, d + 0.01);
-    } else if (name.startsWith("item:")) {
-      const it = room.items.find((i) => `item:${i.id}` === name);
-      if (!it) continue;
-      const r = footprint(it);
-      const far = Math.max(along(r.x0, r.z0), along(r.x1, r.z0), along(r.x0, r.z1), along(r.x1, r.z1));
-      if (far > 0 && far < 3) clip = Math.max(clip, far + 0.004);
-    }
+    if (!name.startsWith("wall:")) continue;
+    const w = name.slice(5);
+    const d = w === "top" ? along(s.pos[0], 0) : w === "bottom" ? along(s.pos[0], room.depth) : w === "left" ? along(0, s.pos[2]) : along(room.width, s.pos[2]);
+    if (d > 0) clip = Math.max(clip, d + 0.005);
   }
   return r3(clip);
 }
 
-interface LightSpec {
+export interface LightSpec {
   kind: "sun" | "area" | "spot" | "point";
   name: string;
   loc: [number, number, number];
@@ -99,23 +93,36 @@ async function collectLights(room: RoomModel): Promise<LightSpec[]> {
   return out;
 }
 
+/** Everything the Blender script needs besides the model: cameras and lights, in Blender coordinates. */
+export function sceneData(room: RoomModel, lights: LightSpec[], shots: Shot[] = roomShots(room)) {
+  return {
+    room: { name: room.name, width: room.width, depth: room.depth, height: room.height, wall_t: WALL_T },
+    shots: shots.map((s) => ({
+      id: s.id,
+      name: s.label,
+      loc: bl(...s.pos),
+      target: bl(...s.target),
+      fov: s.fov,
+      // three.js lens shift is a fraction of the half frame height; Blender's is
+      // a fraction of the frame width (4:3 → height/width = 0.75).
+      shift_y: r3(s.shiftY * 0.5 * 0.75),
+      clip_start: s.id === "top" ? 0.05 : clipStart(room, s),
+      hide: s.hide,
+    })),
+    lights,
+  };
+}
+
+/**
+ * render_in_blender.py for the download: the scene data embedded as DATA_JSON
+ * above the shared renderer (blender-server/voxa_render.py, the same file the
+ * render server runs).
+ */
 export function blenderScript(room: RoomModel, lights: LightSpec[]): string {
-  const shots = roomShots(room).map((s) => ({
-    id: s.id,
-    name: s.label,
-    loc: bl(...s.pos),
-    target: bl(...s.target),
-    fov: s.fov,
-    // three.js lens shift is a fraction of the half frame height; Blender's is
-    // a fraction of the frame width (4:3 → height/width = 0.75).
-    shift_y: r3(s.shiftY * 0.5 * 0.75),
-    clip_start: s.id === "top" ? 0.05 : clipStart(room, s),
-    hide: s.hide,
-  }));
   // No single quote can appear outside JSON strings, so escaping them keeps the raw ''' literal safe.
-  const data = JSON.stringify({ room: { name: room.name, width: room.width, depth: room.depth, height: room.height, wall_t: WALL_T }, shots, lights }, null, 1).replace(/'/g, "\\u0027");
+  const data = JSON.stringify(sceneData(room, lights), null, 1).replace(/'/g, "\\u0027");
   const title = room.name.replace(/[\r\n]+/g, " ");
-  return `# ${title} — exact room model from Voxa (planto3d).
+  return `# ${title}: exact room model from Voxa (planto3d).
 #
 # Use it in Blender (4.2 or newer):
 #   1. Unzip the package; keep room.glb next to this script.
@@ -124,158 +131,10 @@ export function blenderScript(room: RoomModel, lights: LightSpec[]): string {
 #      daylight and the ceiling/window lights, and Cycles set up. Press F12 to render.
 #   Or render every shot from a terminal (PNG files land in ./renders):
 #      blender --background --python render_in_blender.py -- --render [--samples 128] [--percent 50] [shot-id …]
-#
-# Shots taken from behind a wall cut it away with the camera's clip start.
 
-import bpy, json, math, os, re, sys
-from mathutils import Vector
+DATA_JSON = r'''${data}'''
 
-DATA = json.loads(r'''${data}''')
-GLB_NAME = "room.glb"
-
-
-def here_candidates():
-    c = []
-    try:
-        c.append(os.path.dirname(os.path.abspath(__file__)))
-    except NameError:
-        pass
-    for t in bpy.data.texts:
-        if t.filepath:
-            c.append(os.path.dirname(bpy.path.abspath(t.filepath)))
-    if bpy.data.filepath:
-        c.append(os.path.dirname(bpy.data.filepath))
-    c += [os.getcwd(), os.path.expanduser("~/Downloads")]
-    return c
-
-
-def find_glb():
-    for d in here_candidates():
-        p = os.path.join(d, GLB_NAME)
-        if os.path.isfile(p):
-            return p
-    raise FileNotFoundError("room.glb not found — keep it in the same folder as this script")
-
-
-def base(name):
-    return re.sub(r"\\.\\d{3}$", "", name)
-
-
-def look_at(obj, target):
-    d = Vector(target) - obj.location
-    obj.rotation_euler = d.to_track_quat("-Z", "Y").to_euler()
-
-
-def setup():
-    # Fresh scene.
-    for o in list(bpy.data.objects):
-        bpy.data.objects.remove(o, do_unlink=True)
-    glb = find_glb()
-    bpy.ops.import_scene.gltf(filepath=glb)
-    root_col = bpy.context.scene.collection
-
-    cams = bpy.data.collections.new("Shots")
-    root_col.children.link(cams)
-    for s in DATA["shots"]:
-        cd = bpy.data.cameras.new(s["name"])
-        cd.lens_unit = "FOV"
-        cd.sensor_fit = "VERTICAL"
-        cd.angle = math.radians(s["fov"])
-        cd.shift_y = s["shift_y"]
-        cd.clip_start = s["clip_start"]
-        cd.clip_end = 200
-        ob = bpy.data.objects.new(s["name"], cd)
-        ob.location = s["loc"]
-        look_at(ob, s["target"])
-        ob["voxa_shot"] = s["id"]
-        cams.objects.link(ob)
-
-    lights = bpy.data.collections.new("Lights")
-    root_col.children.link(lights)
-    for i, l in enumerate(DATA["lights"]):
-        kind = {"sun": "SUN", "area": "AREA", "spot": "SPOT", "point": "POINT"}[l["kind"]]
-        ld = bpy.data.lights.new(f'{l["name"]} {i + 1}', kind)
-        ld.color = l["color"]
-        ld.energy = l["power"]
-        if kind == "AREA":
-            ld.shape = "RECTANGLE"
-            ld.size, ld.size_y = l["size"]
-        if kind == "SPOT":
-            ld.spot_size = math.radians(90)
-            ld.spot_blend = 0.6
-            ld.shadow_soft_size = 0.05
-        if kind == "POINT":
-            ld.shadow_soft_size = 0.08
-        if kind == "SUN":
-            ld.angle = math.radians(1.5)
-        ob = bpy.data.objects.new(ld.name, ld)
-        ob.location = l["loc"]
-        look_at(ob, l["target"])
-        lights.objects.link(ob)
-
-    world = bpy.context.scene.world or bpy.data.worlds.new("World")
-    bpy.context.scene.world = world
-    if world.node_tree is None:
-        world.use_nodes = True
-    bg = world.node_tree.nodes.get("Background")
-    if bg:
-        bg.inputs[0].default_value = (0.78, 0.84, 0.95, 1)
-        bg.inputs[1].default_value = 0.6
-
-    sc = bpy.context.scene
-    sc.render.engine = "CYCLES"
-    sc.cycles.samples = 128
-    sc.cycles.use_denoising = True
-    sc.render.resolution_x, sc.render.resolution_y = 1600, 1200
-    try:
-        sc.view_settings.view_transform = "AgX"
-    except TypeError:
-        sc.view_settings.view_transform = "Filmic"
-    sc.view_settings.exposure = 0.3
-    sc.camera = bpy.data.objects[DATA["shots"][0]["name"]]
-    return cams
-
-
-def objects_named(names):
-    want = set(names)
-    out = []
-    for o in bpy.data.objects:
-        if base(o.name) in want:
-            out.append(o)
-            out.extend(o.children_recursive)
-    return out
-
-
-def render_all(only, samples, out_dir):
-    sc = bpy.context.scene
-    sc.cycles.samples = samples
-    os.makedirs(out_dir, exist_ok=True)
-    for s in DATA["shots"]:
-        if only and s["id"] not in only:
-            continue
-        hidden = [o for o in objects_named(s["hide"]) if not o.hide_render]
-        for o in hidden:
-            o.hide_render = True
-        sc.camera = bpy.data.objects[s["name"]]
-        sc.render.filepath = os.path.join(out_dir, f'{s["id"]}.png')
-        bpy.ops.render.render(write_still=True)
-        for o in hidden:
-            o.hide_render = False
-        print("rendered", s["name"], "→", sc.render.filepath)
-
-
-argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-setup()
-if "--render" in argv:
-    samples = 128
-    if "--samples" in argv:
-        samples = int(argv[argv.index("--samples") + 1])
-    if "--percent" in argv:
-        bpy.context.scene.render.resolution_percentage = int(argv[argv.index("--percent") + 1])
-    only = [a for a in argv if not a.startswith("--") and not a.isdigit()]
-    out_dir = os.path.join(os.path.dirname(find_glb()), "renders")
-    render_all(only, samples, out_dir)
-`;
+${VOXA_RENDER_PY}`;
 }
 
 // ------------------------------------------------------------------ tiny zip
@@ -350,6 +209,19 @@ export async function roomGlb(room: RoomModel): Promise<ArrayBuffer> {
   } finally {
     rs.dispose();
   }
+}
+
+/**
+ * What the render server takes: the model and the scene data for the shots to
+ * render (custom camera views included). Never a script.
+ */
+export async function renderJobZip(room: RoomModel, shots: Shot[]): Promise<Blob> {
+  const enc = new TextEncoder();
+  const [glb, lights] = await Promise.all([roomGlb(room), collectLights(room)]);
+  return zip([
+    { name: "room.glb", data: new Uint8Array(glb) },
+    { name: "scene.json", data: enc.encode(JSON.stringify(sceneData(room, lights, shots))) },
+  ]);
 }
 
 export async function blenderPackage(room: RoomModel): Promise<Blob> {

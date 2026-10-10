@@ -1,5 +1,6 @@
 import Studio from "./Studio";
 import KeyManager from "./components/KeyManager";
+import RenderServerManager from "./components/RenderServerManager";
 
 export default function Home() {
   return (
@@ -17,6 +18,7 @@ export default function Home() {
 
       <footer className="flex flex-col items-center gap-3 pt-4 text-center text-xs text-neutral-600">
         <KeyManager />
+        <RenderServerManager />
         <span>The 3D model and its shots are built in your browser. Only plan reading, free-form commands and “Make realistic” use AI.</span>
       </footer>
     </main>

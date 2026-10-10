@@ -24,6 +24,7 @@ import CommandBar, { type LogLine } from "./components/studio/CommandBar";
 import ElementsPanel from "./components/studio/ElementsPanel";
 import RoomPanel from "./components/studio/RoomPanel";
 import ShotGallery, { type ShotRecord } from "./components/studio/ShotGallery";
+import { getRenderServer, RENDER_SERVER_EVENT, renderInBlender, type Quality } from "@/lib/room/renderServer";
 import StartScreen from "./components/StartScreen";
 import PlanStep from "./components/PlanStep";
 
@@ -128,6 +129,7 @@ export default function Studio() {
   const [capturing, setCapturing] = useState(false);
   const [saved, setSaved] = useState<RoomModel | null>(null);
   const [, setKeyTick] = useState(0);
+  const [blenderReady, setBlenderReady] = useState(false);
   const [exporting, setExporting] = useState(false);
   const vp = useRef<Viewport3DHandle>(null);
 
@@ -144,8 +146,14 @@ export default function Studio() {
   useEffect(() => {
     setSaved(loadSaved());
     const onKey = () => setKeyTick((t) => t + 1);
+    const onServer = () => setBlenderReady(Boolean(getRenderServer()));
+    onServer();
     window.addEventListener("planto3d-key", onKey);
-    return () => window.removeEventListener("planto3d-key", onKey);
+    window.addEventListener(RENDER_SERVER_EVENT, onServer);
+    return () => {
+      window.removeEventListener("planto3d-key", onKey);
+      window.removeEventListener(RENDER_SERVER_EVENT, onServer);
+    };
   }, []);
 
   useEffect(() => {
@@ -376,6 +384,23 @@ export default function Studio() {
     [shots],
   );
 
+  // Real Blender Cycles on the render server, from the shot's exact camera.
+  const onBlender = useCallback(
+    async (id: string, quality: Quality) => {
+      const rec = shots.find((s) => s.id === id);
+      if (!rec) return;
+      const patch = (p: Partial<ShotRecord>) => setShots((s) => s.map((x) => (x.id === id ? { ...x, ...p } : x)));
+      patch({ cyclesStatus: "Preparing…", cyclesError: undefined });
+      try {
+        const cycles = await renderInBlender(rec.room, rec.shot, quality, (t) => patch({ cyclesStatus: t }));
+        patch({ cycles, cyclesQuality: quality, cyclesStatus: undefined });
+      } catch (e) {
+        patch({ cyclesStatus: undefined, cyclesError: e instanceof Error ? e.message : "The Blender render failed." });
+      }
+    },
+    [shots],
+  );
+
   const onRetake = useCallback(
     (id: string) => {
       const rec = shots.find((s) => s.id === id);
@@ -575,7 +600,17 @@ export default function Studio() {
         </aside>
       </div>
 
-      <ShotGallery shots={shots} version={m.version} aiReady={aiReady} aiName={aiName} onRealistic={onRealistic} onRemove={(id) => setShots((s) => s.filter((x) => x.id !== id))} onRetake={onRetake} />
+      <ShotGallery
+        shots={shots}
+        version={m.version}
+        aiReady={aiReady}
+        aiName={aiName}
+        blenderReady={blenderReady}
+        onRealistic={onRealistic}
+        onBlender={onBlender}
+        onRemove={(id) => setShots((s) => s.filter((x) => x.id !== id))}
+        onRetake={onRetake}
+      />
     </div>
   );
 }

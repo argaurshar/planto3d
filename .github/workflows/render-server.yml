@@ -1,0 +1,46 @@
+name: Render server image
+
+# Builds the Blender render server image, proves it renders (smoke test inside
+# the container), and on main publishes it to GitHub Container Registry as
+# ghcr.io/<owner>/<repo>-render so any Docker or GPU host can run it.
+on:
+  push:
+    branches: [main]
+    paths: ["blender-server/**", ".github/workflows/render-server.yml"]
+  pull_request:
+    paths: ["blender-server/**", ".github/workflows/render-server.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t voxa-render blender-server
+
+      - name: Smoke test (render a tiny room inside the container)
+        run: |
+          docker run -d --name voxa -p 8080:8080 -e RENDER_TOKEN=ci-token voxa-render
+          for i in $(seq 1 40); do curl -sf http://127.0.0.1:8080/health >/dev/null && break; sleep 2; done
+          docker exec voxa python smoke_test.py http://127.0.0.1:8080 ci-token
+
+      - name: Server log
+        if: always()
+        run: docker logs voxa || true
+
+      - name: Publish to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}-render"
+          docker tag voxa-render "$IMAGE:latest"
+          docker tag voxa-render "$IMAGE:${GITHUB_SHA::12}"
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:${GITHUB_SHA::12}"

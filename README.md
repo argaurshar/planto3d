@@ -32,6 +32,8 @@ Banana, or take the model to **Blender**.
    change only materials and light.
 7. **Download for Blender**: `room.glb` plus `render_in_blender.py`, which
    adds every camera, the lighting and Cycles settings.
+8. **Render in Blender** (optional) renders any shot with real Blender Cycles
+   on your own render server.
 
 No AI ever draws or places the room, so there is nothing for it to
 hallucinate. The model is the single source of truth for the 3D view, every
@@ -70,6 +72,15 @@ npm run typecheck
 - **Server (Vercel / Node):** the default build adds `app/api/ai`, which uses
   `GOOGLE_API_KEY` (or `GEMINI_API_KEY`, or `KIE_API_KEY`) for visitors who have
   not saved a key of their own.
+
+## Blender render server
+
+`blender-server/` is a small service that renders any shot with real Blender
+Cycles, from the same model and camera. In the app, every shot card has
+**🎬 Render in Blender**. You host it yourself on a GPU machine, Cloud Run with
+an L4 GPU, or any Docker host. Then connect it at the bottom of the app with
+its URL and token. See [blender-server/README.md](blender-server/README.md)
+for running, Docker and deployment.
 
 ## Blender
 
