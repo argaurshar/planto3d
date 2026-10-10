@@ -1,116 +1,84 @@
-# planto3d
+# planto3d (Voxa)
 
-Turn a **2D floor plan** into AI-generated **3D axonometric** views, room by
-room, with you in the loop. Powered by **Nano Banana 2** (the `nano-banana-2`
-model on [kie.ai](https://kie.ai)).
+Upload the plan of a room (JPEG, PNG or PDF) and get an **exact, true-scale 3D
+model** of it, shot like an interior photographer would: from the **main door
+at eye level**, from **behind the bed or the sofa**, from the corners and from
+above. Change anything by typing ("add bed back", "change side table design",
+"delete that"), turn any shot into a **photoreal render** with Google's Nano
+Banana, or take the model to **Blender**.
 
 ## How it works
 
-1. **Upload** a 2D plan image.
-2. **Generate overview** — an axonometric map of the whole plan.
-3. **Proceed** and **draw a box** around any room.
-4. The app crops that room and generates a **3D axonometric render** of it.
-5. **Regenerate** until you're happy — every version is kept so you can flip
-   back through them.
-6. Pick another room and repeat.
+1. **Upload** a room plan (JPEG / PNG / PDF; draw a box if the drawing has
+   several rooms).
+2. **Read once.** A Gemini vision model reports what is drawn: the room's inner
+   wall lines, the printed dimensions, a box per door, window and furniture
+   symbol. That is the only AI step in building the model.
+3. **Exact model.** Deterministic code turns that reading into a `RoomModel`
+   in metres: true scale from the printed dimensions, doors and windows on
+   their walls, every piece of furniture at a real size, turned so its back is
+   on its wall and pushed flush against it.
+4. **Raw shots.** The model is built in Three.js with a physically based
+   pipeline (image-based light, a shadow-casting sun through the window, area
+   light at the windows, ambient occlusion, filmic tone mapping), so a raw shot
+   already reads like a semi-rendered Blender frame. The first shot is taken
+   from the main door at eye level (1.55 m). Others: behind the bed or sofa,
+   facing it, the corners and a top view.
+5. **Edit** by typing or in the panels. Commands compile to small, validated
+   operations on the model, with undo and redo. Phrasing the local parser does
+   not know goes to the AI, which returns the same operations.
+6. **Make realistic** (optional) sends a raw shot to Nano Banana (Pro) with
+   instructions to keep every wall, opening and piece exactly where it is and
+   change only materials and light.
+7. **Download for Blender**: `room.glb` plus `render_in_blender.py`, which
+   adds every camera, the lighting and Cycles settings.
 
-All image generation runs through kie.ai **server-side**; your API key never
-reaches the browser.
+No AI ever draws or places the room, so there is nothing for it to
+hallucinate. The model is the single source of truth for the 3D view, every
+shot, every edit and the Blender export.
 
-## Tech stack
+## AI keys
 
-- **Next.js** (App Router) + **React** + **TypeScript**
-- **Tailwind CSS** for styling
-- **kie.ai** job API, model `nano-banana-2`
-- Two server route handlers: `app/api/overview` and `app/api/room`
+One key, either kind:
 
-## How the kie.ai integration works
+- a **Google AI Studio** key (`AIza…`, <https://aistudio.google.com/apikey>):
+  Gemini reads the plan and handles free-form commands, and Nano Banana makes
+  the realistic renders. The app picks the best models the key can use.
+- a **kie.ai** key (<https://kie.ai/api-key>): the same jobs through kie.ai's
+  Gemini and `nano-banana-pro` endpoints.
 
-kie.ai is an asynchronous job API, so each generation does three things
-server-side (see `lib/kie.ts`):
+The 3D model, shots, edits and the Blender export need no key.
 
-1. **Upload** the (client-cropped) base64 image to kie.ai's base64 upload
-   endpoint, which returns a temporary hosted URL.
-2. **Create a task** (`createTask`) with the prompt + image URL → `taskId`.
-3. **Poll** `recordInfo` until the task succeeds, then return the result image
-   URL, which the UI renders directly.
-
-## Setup
+## Setup and run
 
 ```bash
 npm install
-cp .env.local.example .env.local   # then add your key
-```
-
-Set `KIE_API_KEY` in `.env.local` to your kie.ai API key (with access to
-`nano-banana-2`). Get / manage it at <https://kie.ai/api-key>.
-
-## Run
-
-```bash
-npm run dev     # http://localhost:3000
-npm run build   # production build
-npm run start   # serve the production build
-npm run lint    # eslint
+cp .env.local.example .env.local   # optional: a server key for the server build
+npm run dev        # http://localhost:3000
+npm run build      # production build (also lints and typechecks)
+npm run start
+npm run lint
 npm run typecheck
-```
-
-## Project layout
-
-```
-app/
-  page.tsx            # mounts the flow
-  PlanToThreeD.tsx    # client state machine (upload → overview → select → room)
-  components/         # PlanUploader, OverviewView, RoomSelector, RoomResult
-  api/
-    overview/route.ts # POST plan image  → axonometric overview
-    room/route.ts     # POST room crop   → 3D room render
-lib/
-  kie.ts              # server-only kie.ai client: upload + createTask + poll
-  prompts.ts          # axonometric overview + per-room prompts
-  crop.ts             # client-side rectangle crop of the plan
-  api.ts              # client fetch helpers
-  image.ts            # data URL validation helper
-  types.ts            # shared types
 ```
 
 ## Deploy
 
-Two supported targets:
+- **GitHub Pages (static):** `.github/workflows/pages.yml` builds a static
+  export on every push to `main`. Visitors paste their own key at the bottom of
+  the page; it stays in their browser's `localStorage` and goes only to Google
+  or kie.ai.
+- **Server (Vercel / Node):** the default build adds `app/api/ai`, which uses
+  `GOOGLE_API_KEY` (or `GEMINI_API_KEY`, or `KIE_API_KEY`) for visitors who have
+  not saved a key of their own.
 
-### Vercel (recommended — keeps your key server-side)
+## Blender
 
-The default build runs the API routes, so your `KIE_API_KEY` stays on the
-server. Import the repo at [vercel.com](https://vercel.com), add a `KIE_API_KEY`
-environment variable, and deploy. (Free-tier function timeout is 60s, which a
-slow generation can exceed; bump to Pro or another Node host if you hit it.)
+Unzip the package, then in Blender go to Scripting, open
+`render_in_blender.py` and run it. Or render every shot from a terminal:
 
-### GitHub Pages (static — bring your own key in the browser)
+```bash
+blender --background --python render_in_blender.py -- --render --samples 128
+```
 
-Pages can only serve static files, so there is **no server** and **no place to
-hide a key**. The repo ships a static build mode for this:
-
-- `.github/workflows/pages.yml` builds a fully static export
-  (`STATIC_EXPORT=true`) and deploys it to Pages on every push to `main`.
-- In the static build there are no API routes — generation runs **in your
-  browser**, so the app shows an **API-key field**; the key you paste is stored
-  only in your browser's `localStorage` and is **never committed**.
-
-To enable it: in the repo, **Settings → Pages → Build and deployment →
-Source: GitHub Actions**. The site publishes at
-`https://<owner>.github.io/planto3d/`.
-
-> ⚠️ Caveat: browser → kie.ai calls only work if kie.ai sends permissive **CORS**
-> headers. If they don't, the front end still loads but generation fails with a
-> network error — use the Vercel/server deploy in that case.
-
-## Notes
-
-- Live generation requires a kie.ai key with credit and `nano-banana-2` access.
-  Without it the UI still runs, but generation calls return an error shown in
-  the UI.
-- Output resolution defaults to `1K`; override with `KIE_IMAGE_RESOLUTION`
-  (`1K` | `2K` | `4K`) or the model with `KIE_IMAGE_MODEL` (server build) /
-  `NEXT_PUBLIC_KIE_*` (static build).
-- kie.ai-hosted uploads and results are temporary (deleted after a few days);
-  the app treats results as ephemeral image URLs.
+Cameras that stand behind a wall cut it away with Blender's clip start, the
+same "clipping camera" the app uses.

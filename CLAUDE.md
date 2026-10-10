@@ -1,459 +1,278 @@
 # CLAUDE.md
 
-Guidance for AI assistants (and humans) working in the **planto3d** repository.
+Guidance for AI assistants (and humans) working in the **planto3d** (Voxa)
+repository.
 
-> **Status: implemented (v0).** The core flow described below is built and
-> compiles (`npm run build` passes). Keep this file accurate as the code
-> changes — regenerate sections from the actual files, configs, and CI.
+> **Status: v1 — exact-model redesign.** The earlier pipeline (an AI redrew
+> every room from a clay blockout) hallucinated layouts and was removed. The
+> app now builds one exact, true-scale room model and renders it itself. AI
+> only reads the plan once, translates free-form commands into model edits,
+> and optionally re-lights a finished shot. `npm run build` passes in both
+> build modes. Keep this file accurate as the code changes.
 
-## Product vision
+## Product
 
-`planto3d` ("plan to 3D") turns a **2D plan** (e.g. a floor plan) into
-**3D isometric / axonometric** views, room by room, under user control. The
-user is in the loop at every step: upload a plan, generate an overview, proceed,
-pick a room by drawing a box, and regenerate any 3D result they don't like.
+The user uploads the plan of **one room** (JPEG / PNG / PDF; a multi-room
+drawing is cropped with a box). The app:
 
-All image generation runs on **[kie.ai](https://kie.ai)** models (the user
-brings only a kie.ai key): Nano Banana 2 for the overview, and a selectable
-**render engine** (Nano Banana Pro / Qwen image-to-image / FLUX Kontext) for
-the room photo. The only geometry we build ourselves is the per-room clay
-massing + depth map that locks the render's layout.
+1. **Reads the plan once** into a `RoomModel` (`lib/room/types.ts`): interior
+   width × depth in metres, ceiling height, doors and windows on their walls,
+   and every drawn piece of furniture with its real size, position and facing.
+2. Builds the **exact 3D room** in the browser (Three.js) and gives a **raw
+   shot** — a semi-rendered frame of the model — from the **main door at
+   human eye level** first.
+3. On request, takes **other shots**: from **behind the main element** (bed
+   back in a bedroom, sofa back in a drawing room, desk, dining table…),
+   facing it, from the corners and from the top.
+4. Applies **edits by command**: "add bed back", "change the bed design",
+   "change side table design", "make the sofa emerald velvet", "move the bed
+   30 cm left", "delete that", "paint the walls sage", "remove false ceiling",
+   "take shot from bed back"… plus panels for everything, undo and redo.
+5. **Make realistic** (only when asked) sends a raw shot to Google Nano
+   Banana with "keep everything exactly; change only materials and light".
+6. **Download for Blender**: `room.glb` + `render_in_blender.py` (cameras,
+   lights, Cycles) + `room.json`, zipped.
 
-## Interaction flow
+**Principle:** the `RoomModel` is the single source of truth. The live view,
+every shot, every edit, the realistic pass and the Blender export are built
+from it, so they cannot disagree. AI never draws or places the room.
 
-This is the canonical user journey (implemented in `app/PlanToThreeD.tsx` as a
-`useReducer` state machine with steps
-`upload → house → (select) → roomSetup → roomPrompt → room`):
+## Flow (app/Studio.tsx)
 
-1. **Upload** a 2D plan image (`components/PlanUploader.tsx`).
-2. **Design brief** — pick a style preset, lighting, and optional plan metadata
-   (`components/DesignBrief.tsx`); threaded into every prompt.
-3. **3D model of the whole home (Stage 0)** — the plan is read ONCE into one
-   model (`lib/house.ts`): POST `{ plan }` to `/api/house` runs a Gemini pass
-   over the FULL plan (`HOUSE_EXTRACTION_PROMPT`) that returns every **room**
-   rectangle (with its printed dimensions), every **door/window** and every
-   **furniture** item in one 0-1000 frame. The client `finalizeHouse`s it:
-   room edges within ~1.4% snap onto shared wall lines, and the plan's
-   **scale** is the median of every printed room dimension (falls back to a
-   typical-room-area guess, flagged "estimated"). `houseWalls` derives the
-   walls from the room boundaries — a wall shared by two rooms is built once,
-   seen from both sides (`buildWall` with `centered`), with its openings
-   attached to the nearest wall line — and `roomLocalBoxes` derives each
-   room's own layout (openings hugging the wall they sit on, furniture inside
-   it; a door between two rooms belongs to both). `lib/houseScene.ts`
-   `assembleHouse` builds the dollhouse in Three.js (floors, merged walls
-   with openings, the same furniture proxies the room render uses) and
-   `renderHouseIso` renders it from an orthographic axonometric camera to a
-   PNG. `components/HouseStep.tsx` shows it live (`components/HouseView.tsx`:
-   orbit, "Axonometric"/"Top view", the plan beside it with the rooms,
-   doors and windows drawn over it; click a room in 3D or on the plan to
-   pick it; the green marker is where the render camera will stand and
-   "Entry view" steps the orbit camera just inside that doorway). Why the
-   whole house first: a room cropped on its own lost its context — the
-   crop's detector had to guess where the walls were from the crop's edges,
-   which door was the entry and how big the room was. The **styled AI
-   overview** is now optional: POST `{ plan, brief, massing }` to
-   `/api/overview`, where `massing` is the house's axonometric clay PNG, so
-   Nano Banana 2 styles OUR view instead of re-drawing the plan
-   (`overviewPrompt(brief, hasMassing)`); a Clay ↔ Styled compare slider shows
-   the two. If the plan can't be read (`houseStatus: "failed"`) the user can
-   retry or fall back to drawing a box.
-4. **Pick a room** — in the house model ("Render <room> →"): the room's
-   rectangle is cropped from the plan (`roomRectPx` in natural pixels), and
-   its `roomLocalBoxes` + `roomSizeOf` go straight into the room flow as a
-   **known layout** (`knownLayout` in state) — no per-room detection, no
-   dimension read; the crop is only the prompt writer's visual context. Or
-   **draw a box** around a room **on the 2D plan** (`components/RoomSelector.tsx`,
-   the "Draw a box instead" fallback, e.g. when detection missed a room):
-   then detection runs on the crop as before. The plan is the geometric
-   source of truth: it is exact and top-down, so crop coordinates are floor
-   coordinates — which is what detection and the blockout assume. (Cropping
-   from the axonometric overview was the old behaviour and compounded error:
-   the overview is itself an AI drawing that drifts from the plan, and its
-   image-y mixes height with depth, skewing the blockout.) The selection is
-   captured in **natural image pixels** and cropped client-side
-   (`lib/crop.ts`; remote images go through the CORS proxy `lib/imageProxy.ts`
-   so the canvas isn't tainted). Then a per-room
-   **setup table** (`components/RoomSetup.tsx`) picks the **interior type +
-   style** (overrides the brief's style for this room only; the type is
-   preselected from the room's label via `roomTypeFromLabel`).
-5. **Two-stage room render:**
-   - **3a — prompt writer** — `/api/room` `action:"write"` calls a kie.ai vision
-     LLM (`lib/kieChat.ts`) to auto-write a **photorealistic interior** prompt,
-     shown in an **editable** box (`components/RoomPrompt.tsx`). It first runs a
-     **spatial-extraction pass** (`lib/spatial.ts`): the same Gemini vision model
-     returns **2D bounding boxes** of the room's furniture/fixtures, windows and
-     doors, which are converted to a **detected layout** string and fed to the
-     writer as ground truth so the prompt **enumerates the exact spatial
-     arrangement** (positions/counts, windows on which wall, doors) instead of
-     guessing. Detection is best-effort — if it fails, the writer degrades to
-     describing the crop directly. The approved overview is passed as a 2nd image
-     here for whole-home style consistency. NOTE: this **grounds** the prompt but
-     does not hard-enforce geometry — the render (3b) is still text-to-image, so
-     layout fidelity is improved, not guaranteed (true enforcement would need
-     ControlNet/structural conditioning, which nano-banana / Gemini image models
-     don't expose).
-   - **3a.5 — layout lock (blockout)** — from the detected boxes, the client
-     builds an eye-level **clay model** of the room with Three.js
-     (`lib/blockout.ts` + `lib/proxies.ts`): floor, ceiling, **walls of real
-     thickness with the door and window openings cut in** (full-height pieces
-     between openings, lintels, sills, frames, a closed door leaf, glass with
-     a cross mullion, a window board, skirting), and a **proxy per furniture
-     item** built from its category and label — a bed is base + mattress +
-     headboard + pillows + a throw, a wardrobe has door panels and handles,
-     a bookshelf has shelves, a table or chair has legs, a sofa has a backrest,
-     arms and cushions, a bathtub has a rim, a toilet a tank, a sink a
-     pedestal; ottomans/poufs and round coffee/side tables are cylinders (a
-     "round" label or a square footprint), a plant is a pot with a leafy
-     canopy, a floor lamp a pole with a shade; rugs are flat. Each proxy is turned so its back faces its
-     nearest wall (headboard, sofa back, wardrobe doors all read correctly).
-     Boxes were too ambiguous: a slab could be a bed, a bench or a plinth, and
-     the renderer guessed. Lambert materials plus a
-     hemisphere/sun/ambient rig give it real shading, the sun casts **real
-     shadows** and **every block is outlined** in a dark edge line: the
-     structural signal Kontext preserves most faithfully is edges and contact
-     shadows, not colour. **Its tones are mid real-material colours** (oat bed,
-     deep-sage seating, walnut storage, oak tables, tan rug on a mid-grey floor)
-     rather than a saturated segmentation palette: Kontext preserves colour as
-     part of structure, so the old blue/orange/purple legend came back out of
-     the renderer as a teal panel, an orange wardrobe and a purple bench. But
-     they must stay clearly darker than the walls and distinct from the floor —
-     a first clay palette with a linen-cream bed and a sand rug all but
-     vanished against the off-white shell, and with nothing left to preserve
-     Kontext re-imagined the whole layout. The camera stands **outside** the
-     wall carrying the door — **in the doorway**, the view a person gets at
-     the entry point, which is what the product promises (that wall is
-     culled, so the door itself is never in frame, and a door at the top of
-     the plan means the view is mirrored against the plan; both accepted).
-     Only with no door, or tall furniture right inside it, does `cameraSpot`
-     fall back to the plan's bottom edge (plan orientation preserved), then
-     the emptiest wall. Each furniture proxy's **back faces** the wall from
-     `facingWall`: a bed uses the **"pillows" box** the detector is asked to
-     return with every bed (the side the pillows sit on is the head — a bed
-     centred in the room used to show the back of its headboard to the
-     camera); everything else uses the wall its edge is nearest to, with a
-     near-tie going to the wall facing the viewer. Pillow/headboard boxes are
-     orientation cues only (`isHelperLabel`): never drawn, counted or
-     described. The floor, ceiling and flanking walls are
-     stretched by the same offset so the frame stays bounded by real surfaces —
-     standing inside a 3.4x3.0m bedroom put the eye on top of a wardrobe. The
-     viewpoint is pulled toward the middle of its wall for framing. Openings
-     detected on the camera's own wall are **not drawn** (that wall is culled,
-     and a door panel 1.8m in front of the lens used to eat a third of the
-     frame). The footprint is scaled from the
-     plan's **printed dimensions** when they can be read (`ROOM_DIMENSION_PROMPT`
-     / `parseRoomDimensions`, axes auto-corrected against the crop aspect), else
-     from the crop aspect at an assumed size. Three.js is
-     dynamically imported (browser-only; code-split out of SSR). A small preview
-     ("Layout lock") is shown in `components/RoomPrompt.tsx`, and the detected
-     boxes are drawn over the plan crop with a marker for where the camera
-     stands (`components/DetectionOverlay.tsx`; the `boxes` live in state).
-     On the prompt step the boxes are **editable**, in 2D on the crop (drag
-     to move, corner handles to resize, Delete to remove, relabel, or "+ Add
-     box" and draw a missing item) and in **3D** (`components/LayoutEditor3D.tsx`,
-     full width below the grid): a live Three.js scene built by the SAME
-     `assembleScene` the render uses, with OrbitControls to inspect, "Entry
-     view" (the render camera) and "Top view" (the ceiling is hidden from
-     above), click-to-select (proxies and opening panels carry
-     `userData.boxIndex`), drag across the floor (doors and windows snap to
-     the nearest wall on drop), Delete, an inline label, width/depth in
-     metres, Rotate 90°, a palette of furniture/doors/windows to add, and the
-     room's own size. Every edit — from either editor — goes back into the
-     one box list and rebuilds the clay massing, depth map and layout text
-     client-side (`editBoxes` / `editRoomSize` → `buildLayout`; `roomSize` is
-     kept in state so the rebuild stays at true scale) — no detection call,
-     no cost, and the 2D overlay, the 3D view and the render can never
-     disagree.
-     Detection is good but not perfect (it invented a window and missed a
-     unit on one plan); fixing it here is the cheapest route to an exact
-     layout, and the render then inherits the correction.
-     The result page shows the whole **evidence chain** — crop + boxes → clay
-     massing → render — so a wrong render can be traced to its stage: massing
-     ≠ plan means detection is at fault, render ≠ massing means the renderer.
-     The same 3D editor sits on the result page too ("Adjust the 3D layout,
-     then re-render"): edits rebuild the lock in place and **Re-render with
-     this layout** (Regenerate) renders the edited scene.
-   - **3b — render** — when a blockout is present, `action:"render"` turns it
-     into the photo with the **render engine** chosen in `RoomSetup`
-     (`lib/renderEngine.ts`, one transport-agnostic dispatcher used by the
-     server route and the static build; each build supplies the three kie.ai
-     calls). The massing also comes with a **depth map** of the same view
-     (`buildBlockoutMaps`, a second draw with a linear-depth shader). Engines:
-     - **reference** (default) — `nano-banana-pro` with the clay AND the depth
-       map as reference images, asked for "the photograph this massing stands
-       for" (`referenceRenderPrompt`), 2K output. Gemini image models follow
-       multi-image structure instructions far better than an edit model.
-     - **structure** — `qwen/image-to-image`, classic image-to-image with a
-       denoise `strength`: at strength s only the last s of the diffusion is
-       re-run, so the massing's layout survives **by construction**. Two
-       passes: lock (0.62 from the clay) then refine (0.38 from pass 1), with
-       a negative prompt against extra doors/windows/furniture
-       (`structureRenderPrompt`, `STRUCTURE_NEGATIVE_PROMPT`).
-     - **edit** — `flux-kontext-max`, the previous default: an edit model
-       "rephotographs" the massing (`kontextRenderPrompt`). It re-imagined
-       layouts under a strong prompt and furnished empty walls, which is why it
-       is no longer the default. kie.ai has no depth/canny ControlNet endpoint,
-       so the reference and structure engines are the closest available to
-       pixel-aligned conditioning.
-     All engine prompts share the block legend, forbid adding, removing or
-     moving anything, say a wall with no block against it stays **bare** (an
-     empty wall used to get a door and a dresser painted on it), and frame the
-     writer's interior prompt as styling only ("wherever it disagrees with the
-     image about what is where, the image wins"). The writer is told not to
-     mention the camera, entrance or doorway — image models take any "door" in
-     the text as a cue to paint one. Overrides: `KIE_REFERENCE_MODEL`,
-     `KIE_REFERENCE_RESOLUTION`, `KIE_STRUCTURE_MODEL`, `KIE_STRUCTURE_GUIDANCE`
-     (and `NEXT_PUBLIC_` twins for the static build).
-   - **3c — verify & retry** — the finished render is checked by the vision LLM
-     against the detected layout (counts + which wall for each item, window/door
-     placement). On mismatch it re-renders ONCE with the verifier's corrections,
-     then reports the result as a **Verified ✓ / Check failed** badge; on
-     failure the verifier's `problems` are returned and shown under the header
-     so the badge is diagnosable. The render → verify → retry loop is ONE
-     transport-agnostic function (`lib/verifyLoop.ts`) shared by the server
-     route and the static build; it skips the retry when the verifier lists
-     no problems (nothing to correct) or the budget can't fit it, and keeps
-     the first pass's problems if the re-check itself is unavailable. The
-     verifier is told that openings marked "behind the viewer (not visible)"
-     are outside the frame by design (`isBehindViewer` in `lib/spatial.ts` is
-     the one predicate the blockout cull and the layout text share), to report
-     anything extra the photo shows, and to phrase each problem as what the
-     photo wrongly shows; the retry prompt frames those as mistakes not to
-     repeat (it renders from the same massing again, so "move X" would be
-     meaningless). Each
-     version in `roomVersions[]` carries its own `verification`, so browsing
-     history shows the badge that belongs to that image. Fallbacks:
-     Kontext unavailable → nano-banana image-to-image from the blockout; no
-     blockout at all (detection/WebGL failed) → **text-to-image**. The top-down
-     crop is still **never** fed to the renderer. Style/lighting from the brief
-     are re-injected.
-6. **Regenerate** (vary the render) / **Edit prompt** / **Rewrite with AI**;
-   every version is kept in `roomVersions[]` and is navigable.
-7. **Pick another room** and repeat.
+`start` (`components/StartScreen.tsx`: upload, samples, blank room of a given
+size, continue the autosaved room) → `plan` (`components/PlanStep.tsx`:
+preview, PDF page picker, optional crop box, room type, hint, "Read plan &
+build 3D", or skip the AI and enter the size) → `studio`:
 
-Key principles: a global **design brief**, user-confirmed incremental
-generation, draw-a-box selection, a **transparent editable prompt** between
-selection and render, and regeneration as a first-class action that preserves
-the selected room. The overview is **axonometric**; rooms are **photorealistic
-eye-level interiors**, rendered **image-to-image from an eye-level 3D blockout**
-built from the detected layout (the blockout locks the camera viewpoint and the
-wall/window/door/furniture positions so the render can't rearrange them); it
-falls back to **text-to-image** when no blockout is available.
+- `studio/Viewport3D.tsx` wraps `RoomViewport`. Click a piece to select it,
+  drag the selected piece on the floor to move it, and drag empty space to
+  orbit. Its `capture(shot)` renders 1600×1200 PNG shots. It waits for WebGL
+  and re-syncs to the latest model first.
+- `studio/ShotBar.tsx` lists the preset shots and has "Take this shot", which
+  captures the preset or, after orbiting, the free camera.
+- `studio/CommandBar.tsx` holds the command box, contextual suggestions, undo
+  and redo, and the log.
+- `studio/ElementsPanel.tsx` lists the elements. The selected-element editor
+  has design (variant), finish chips and free text, W/D/H, x/z, facing,
+  rotate, nudge and delete. It also adds elements and has "Furnish it for me".
+- `studio/RoomPanel.tsx` edits the name, kind, style, size, wall colour,
+  floor, false ceiling and curtains, plus doors and windows (kind, wall, centre
+  offset, width, sill, main door).
+- `studio/ShotGallery.tsx` shows the captured shots. Each has "Make
+  realistic" with an optional direction, a raw ↔ realistic compare slider,
+  downloads, and "Retake with changes" when the model has changed since.
+- State: a reducer with `room`, `past`, `future`, `version`, `selectedId` and
+  `lastId` (up to 80 undo steps). The room autosaves to localStorage
+  (`planto3d_room_v1`). Preset shots follow the model: move the bed and the
+  bed back view moves with it. Keyboard: Delete removes the selection,
+  Ctrl/Cmd+Z undoes, Ctrl+Shift+Z or Ctrl+Y redoes, and Esc deselects.
 
-## Tech stack
+## The room model (lib/room)
 
-- **Next.js** (App Router) + **React 19** + **TypeScript** (strict).
-- **Tailwind CSS** for styling.
-- **kie.ai**, server-side only. Models:
-  - **`flux-kontext-max`** (FLUX.1 Kontext) via kie.ai's dedicated Kontext API
-    (`/api/v1/flux/kontext/generate` + `record-info`) — a **structure-preserving
-    edit model** used for the layout-locked room render: the blockout image
-    fixes the composition, the prompt says what to turn each block into.
-  - **`nano-banana-2`** image model via the **job API** (`lib/kie.ts`) — the
-    overview render + the room-render fallback when the engine/blockout is
-    unavailable.
-  - **`nano-banana-pro`** (reference engine) and **`qwen/image-to-image`**
-    (structure engine), both via the same job API (`createJob` + `pollTask`).
-  - a **vision chat model** (`gemini-3-flash`) via the **OpenAI-compatible
-    chat endpoint** for the prompt-writer and the post-render **layout
-    verifier** (`lib/kieChat.ts`).
-  - a **detection model** (`gemini-3-pro`) for the spatial-extraction pass that
-    builds the blockout — stronger spatial reasoning than flash, with a
-    retry-on-too-few guard (`lib/spatial.ts` / `lib/kieChat.ts`).
-    (The earlier `gemini-2.5-flash`/`-pro` were retired by Google, which returns
-    a 404 through kie.ai's proxy — keep these on a current Gemini generation.)
-- The kie.ai API key (`KIE_API_KEY`) is read **only** in server code
-  (`lib/kie.ts` / `lib/kieChat.ts`, which import `server-only`); it is never
-  bundled into the client. Overrides: `KIE_IMAGE_MODEL`, `KIE_IMAGE_RESOLUTION`
-  (`1K`|`2K`|`4K`, default `1K`), `KIE_CHAT_MODEL` (default `gemini-3-flash`),
-  `KIE_DETECT_MODEL` (default `gemini-3-pro`), `KIE_KONTEXT_MODEL` (default
-  `flux-kontext-max`).
+Plan coordinates in **metres**, as drawn: x → right, z → down the plan,
+interior floor (0,0)–(width, depth). Walls are `top|bottom|left|right`. An
+item's `facing` is where its **front** looks (`up|down|left|right`), so its
+back is on the opposite side. An opening's `offset` is its centre measured
+from the left end of top/bottom walls and from the top end of left/right
+walls.
 
-### kie.ai job flow (in `lib/kie.ts`)
+- `types.ts`: `RoomModel`, `Item`, `Opening`, `Shot`.
+- `catalog.ts` defines every `ItemType`: its label, aliases used for commands
+  and plan labels (longest alias wins, so "bed back" is not "bed"), standard
+  size, plausible size range, `againstWall` / `wallMounted` / `flat`, material
+  role and design variants. It also holds `MAIN_ITEM_ORDER` (what "main
+  element" means per room kind) and `kindFromWords`.
+- `styles.ts`: five style palettes (`modern-warm`, `scandinavian`, `luxury`,
+  `minimal`, `indian-contemporary`), plus colour and wood words.
+- `materials.ts` paints procedural canvas textures (wood, planks, marble,
+  tiles, fabric, cane, rugs, art, exterior) and supplies a `Materials` cache
+  with a clay mode. `resolveFinish` reads finish words such as "walnut",
+  "emerald velvet", "white marble" or "#aabbcc".
+- `kit.ts`: `loadThree()`, `Kit` (box/rbox/cyl… helpers) and `worldUV` (UVs in
+  world metres).
+- `furniture/{bedroom,living,other}.ts` hold one builder per type and
+  variant, in a local frame (front +z). `furniture/index.ts` `buildItem`
+  names each group `item:<id>`.
+- `shell.ts` builds the floor, walls of real thickness with openings cut in
+  (frames, leaves, glass, sills, an exterior backdrop), skirting, curtains, the
+  ceiling and an optional false ceiling with cove and downlights, plus
+  `buildDaylight`. Groups are named so a shot can hide them: `wall:<side>`,
+  `door:<id>`, `ceiling`, `curtains`, `exterior`.
+- `scene.ts`: `buildRoomScene(T, room, {clay, lights})` is the ONE scene
+  builder, used by the viewport, the shots and the Blender export.
+- `viewport.ts`: `RoomViewport` has a PBR pipeline (RoomEnvironment PMREM,
+  ACES, exposure 0.85, PCF shadows, GTAO, bloom only above 1.6, OutputPass).
+  It offers `setRoom`, `setShot` (level camera plus lens shift), `capture`,
+  `pick`, `floorPoint` and `previewMove`. A preset shot is left only when the
+  camera actually moves.
+- `shots.ts` computes the preset shots from the model:
+  - **Entry** stands 0.5 m inside the main door at eye level 1.55 m, looking
+    between the room centre and the main piece.
+  - **Back** stands behind the main piece, far enough that its back sits in
+    the bottom of the frame. If that spot is outside the room or blocked, the
+    camera stands behind the wall and the wall plus what hangs on it are
+    hidden: the "clipping camera".
+  - **Front** looks from the opposite wall, with that wall clipped.
+  - **Corners** must be standable: on free floor, clear of tall furniture.
+  - **Top** is the last shot.
+- `geometry.ts`: footprints, `wallBehind`, `mainDoor`, `mainItem`,
+  `itemsAgainst` and `formatSize` (m + ft).
+- `place.ts` decides where a new piece goes:
+  - A bed back panel spans the wall behind the bed, and side tables flank the
+    bed's head.
+  - A wardrobe goes on a side wall, in the foot-end corner. A TV unit faces the
+    bed or sofa, and a coffee table sits in front of the sofa.
+  - `fits` keeps pieces out of door swings and keeps tall pieces away from
+    windows.
+  - `settle` pushes pieces in front of a wall-hung panel.
+  - `normalizeRoom` runs after room edits.
+- `commands.ts`: `parseCommand` → `Op[]` (`add` / `remove` / `update` /
+  `room` / `shot`) → `applyOps`, which validates, places and never throws.
+  `runCommand` = parse + apply. `sanitizeOps` validates AI-proposed ops.
+  Clause splitting keeps the verb across "and" ("add a bed back and side
+  tables"). "that/it" means the selection, or the last piece touched. "move
+  the bed back" means backwards.
+- `read.ts`: `readingToRoom(reading, imageSize, hint)` turns the AI's plan
+  reading into the model:
+  - Scale comes from the printed dimensions, parsed by `parseDimension` (12'0",
+    3600 mm, 3.6 m…) and axis-checked against the drawn aspect. Otherwise it
+    is estimated from door and bed sizes, then from a typical area, and
+    flagged `estimated`.
+  - Each opening is snapped to its wall, deduplicated, and one is made the
+    main door.
+  - Each piece is typed, sized into its catalog range, faced (bed `head`,
+    `front`, or its nearest wall) and pushed flush.
+- `furnish.ts`: `autoFurnish` gives a standard layout per room kind using the
+  same placement. `blankRoom` makes an empty room.
+- `samples.ts`: a sample bedroom (12′×14′) and a sample living room
+  (4.5×5.5 m).
+- `blender.ts` builds the Blender package:
+  - `roomGlb` uses GLTFExporter on the same scene.
+  - `blenderScript` writes Python that imports the GLB, creates a camera per
+    shot (vertical FOV, lens shift, clip start that cuts away walls behind the
+    camera), lights collected from the scene (sun, window and cove area
+    lights, downlights, lamps), the world and Cycles/AgX settings, and a
+    `-- --render [--samples N] [--percent P] [ids]` loop that also hides each
+    shot's `hide` list.
+  - A dependency-free store-only `zip`.
+  - Verified with real Blender 5.0 (bpy) Cycles renders.
 
-kie.ai is asynchronous and `image_input` requires hosted **URLs**, not base64,
-so each generation does three steps server-side:
-1. `uploadBase64` — POST the client's base64 crop to
-   `https://kieai.redpandaai.co/api/file-base64-upload` → temporary `downloadUrl`.
-2. `createTask` — POST `{ model, input: { prompt, image_input:[url], ... } }` to
-   `https://api.kie.ai/api/v1/jobs/createTask` → `taskId`.
-3. `pollTask` — GET `https://api.kie.ai/api/v1/jobs/recordInfo?taskId=...` until
-   `state:success`, then read `resultJson.resultUrls[0]`.
+## AI (lib/ai) — three jobs only
 
-The routes return `{ image, mimeType }` where **`image` is a remote URL** the UI
-drops straight into `<img src>`.
+- `prompts.ts` holds the prompts for each job:
+  - `PLAN_READER_SYSTEM` asks for JSON with `room_box`, `printed_size`
+    (verbatim), `openings[]` and `items[]` as Gemini-native
+    `[ymin,xmin,ymax,xmax]` 0-1000 boxes, bed `head`, and `front`. It says
+    never compute or guess numbers and never invent furniture.
+  - `COMMAND_SYSTEM` + `commandUser` describe the Op schema, the catalog and
+    the room JSON.
+  - `realisticPrompt` keeps the camera, geometry and every piece exactly, and
+    changes only materials and light.
+- `google.ts` (key `AIza…`) talks to the Gemini API `v1beta` and lists the
+  key's models to pick the best of each: reader = newest pro, fast = newest
+  flash, image = best `gemini-*-image` (Nano Banana Pro first). `geminiText`
+  uses JSON mode. `geminiImage` returns an image data URL, with 4:3 output and
+  2K on newer models.
+- `kie.ts` (any other key) handles kie.ai upload → jobs `createTask` → poll,
+  plus the chat endpoint. Models: `gemini-3-pro` reader, `gemini-3-flash` chat
+  and `nano-banana-pro` render, overridable with `KIE_READER_MODEL`,
+  `KIE_CHAT_MODEL`, `KIE_RENDER_MODEL` and `KIE_RENDER_RESOLUTION`.
+  `kiePoll.ts` sets a 5-minute window and tolerates transient
+  "generate task timeout" fails for 120 s.
+- `run.ts`: `providerFor(key)`, `runReadPlan` (one retry on bad JSON, falls
+  back to the fast model), `runCommand` and `runRealistic`. It is isomorphic.
+- `client.ts` is the browser entry. A key saved in this browser
+  (`planto3d_ai_key`; the legacy `planto3d_kie_key` is still read) is used
+  directly. Otherwise the server build POSTs to `/api/ai`, and the static
+  build throws `NeedKeyError`.
+- `app/api/ai/route.ts` serves the server build only. It uses
+  `GOOGLE_API_KEY` / `GEMINI_API_KEY` / `KIE_API_KEY` from env, validates
+  input (data-URL images under ~10 MB, room shape) and maps errors to
+  401/429/502.
 
-### Two-stage room pipeline (`/api/room`)
-
-`/api/room` takes an `action`:
-- `"write"` → `lib/kieChat.ts` `writeRoomPrompt` (vision LLM) returns
-  `{ prompt, boxes, roomSize }`. It runs a Gemini **spatial-extraction** pass
-  (`lib/spatial.ts`: bounding boxes → detected-layout string) and, concurrently,
-  a cheap **dimension read** (`ROOM_DIMENSION_PROMPT` → `parseRoomDimensions`,
-  on the chat model) to ground the prompt, then writes the interior prompt
-  (falls back to a templated prompt if the LLM call fails, so the user can
-  always render). The `boxes` and `roomSize` are returned so the client can
-  build the eye-level blockout at true scale (`lib/blockout.ts`). The layout
-  string is written **relative to the viewer** standing where the blockout
-  camera stands (`cameraSpot` — one pure function shared by the blockout, the
-  prompt writer and the verifier, so all three agree on which wall is "back").
-  It prefers the doorway, then the plan's bottom edge, then the emptiest wall.
-  Only furniture at least 1m tall can reject a camera spot; the eye looks
-  over rugs and low tables (a rug by the door used to flip the whole view).
-  The `auto` action passes `needRoomSize: false` since it never returns it.
-  With `boxes` (+ `roomSize`) in the body — the room's layout from the
-  whole-house model, validated (≤80 boxes, 0-1000 coords) — `write` skips
-  detection and the dimension read and writes the prompt from
-  `describeLayout(boxes)`; "Rewrite with AI" sends the boxes as the user
-  edited them, so the prompt follows the corrected layout.
-- Every generation in a route draws from one budget derived from `maxDuration`
-  (`ROUTE_BUDGET_MS`); `renderLocked` skips the fallback/corrective retry when
-  under `MIN_RENDER_MS` remains so an already-billed image is returned instead
-  of lost to a platform kill.
-- `"render"` → with a `blockout` (eye-level massing PNG, plus optional `depth`
-  map and `engine`) it runs `renderLocked`: the chosen engine
-  (`renderWithEngine`) turns the massing into a photo, then `verifyRenderLayout`
-  (vision check vs the `layout` text) with ONE corrective retry → returns
-  `{ image, verification?: { matches, problems } }`. The massing and depth map
-  are hosted once and their URLs reused by every generation in the request.
-  Engine failure falls back to nano-banana image-to-image from the massing; no
-  blockout → **text-to-image**.
-- `"auto"` → write (from the crop) then the same render path in one call.
-
-The optional `reference` (the overview URL) is accepted by `write`/`auto` and
-**host-validated** via `lib/refs.ts` `isAllowedReference` (https + a kie.ai host)
-before being forwarded to the prompt writer for whole-home consistency. The
-`blockout` (a base64 data URL) is accepted by `render`/`auto`, size-capped and
-data-URL-validated; if malformed it is dropped and the render falls back to
-text-to-image.
+Other: `lib/planFile.ts` loads images or PDFs (pdf.js **legacy** build, which
+carries polyfills the modern build needs). Images are capped at 2400 px and
+`cropPlan` crops them. `lib/download.ts` and `lib/imageProxy.ts` download
+remote kie.ai images through a CORS proxy. `components/KeyManager.tsx` is the
+one key field, auto-detecting Google vs kie.ai, and it fires a
+`planto3d-key` event.
 
 ## Project structure
 
 ```
 app/
-  layout.tsx            # root layout
-  page.tsx              # mounts the flow
-  globals.css           # Tailwind entry
-  PlanToThreeD.tsx      # client state machine (the whole flow)
+  layout.tsx, page.tsx, globals.css
+  Studio.tsx                  # the whole app (start → plan → studio)
+  api/ai/route.ts             # server build: AI jobs with the server key
   components/
-    KeyManager.tsx      # static build: bottom-of-app user API-key entry
-    Hero.tsx            # upload-step landing: headline + CTA + live CSS-3D demo of the pipeline
-    StepBar.tsx         # progress bar shown on every step after upload
-    PlanUploader.tsx    # file → data URL (click, drag-and-drop, or paste)
-    DesignBrief.tsx     # style preset + lighting + plan metadata
-    HouseStep.tsx       # Stage 0 page: brief + HouseView + optional styled overview (clay ↔ styled slider)
-    HouseView.tsx       # live Three.js whole-house model (orbit/top/entry view) + plan with rooms; click to pick
-    CompareSlider.tsx   # before/after drag slider (2D vs 3D)
-    DownloadButton.tsx  # blob-fetch download for remote images
-    RoomSelector.tsx    # box drawing over the plan
-    RoomSetup.tsx       # per-room interior type + style table
-    DetectionOverlay.tsx # plan crop with the detected boxes + camera marker drawn over it (editable)
-    LayoutEditor3D.tsx  # live Three.js room editor: select/drag/delete/add/resize, room size
-    RoomPrompt.tsx      # editable auto-written interior prompt + Render
-    RoomResult.tsx      # evidence chain (crop+boxes → clay massing → render) + Regenerate/history
-  api/
-    house/route.ts      # POST { plan }                         → { house } (rooms/openings/furniture)
-    overview/route.ts   # POST { plan, brief, massing? }        → { image, mimeType }
-    room/route.ts        # POST { action, room, brief, prompt… } → { image|prompt }
+    StartScreen.tsx  PlanStep.tsx  KeyManager.tsx  CompareSlider.tsx  DownloadButton.tsx
+    studio/  Viewport3D.tsx  ShotBar.tsx  CommandBar.tsx  ElementsPanel.tsx  RoomPanel.tsx  ShotGallery.tsx
 lib/
-  kie.ts                # server-only kie.ai image client (upload + createTask + poll)
-  kieChat.ts            # server-only kie.ai vision-LLM prompt writer (Stage 3a)
-  spatial.ts            # Stage 3a grounding: detect boxes → viewer-relative layout string;
-                        #   printed-dimension reader; cameraSpot (shared viewpoint)
-  kiePoll.ts            # shared poll policy for both clients: 5-min window, transient
-                        #   "generate task timeout" grace (120s), timeout messages
-  verifyLoop.ts         # render → verify → one corrective retry (shared by route + static)
-  renderEngine.ts       # reference / structure / edit engine dispatch (shared by route + static)
-  house.ts              # Stage 0 whole-house model: extraction prompt, parse, snap + scale,
-                        #   houseWalls (merged), roomLocalBoxes/roomSizeOf/roomRectPx
-  houseScene.ts         # assembleHouse (dollhouse: floors, merged walls, proxies) + iso render
-  blockout.ts           # assembleScene (shared by render + editor) + clay/depth offscreen render
-  proxies.ts            # scene assembly: furniture proxies + walls with openings (Three.js)
-  prompts.ts            # overview + prompt-writer system + room render templates
-  styles.ts             # interior-design style presets + brief resolution
-  kieBrowser.ts         # static build: browser-side kie.ai client (user key)
-  crop.ts               # rect math + crop a region of the plan → PNG data URL
-  download.ts           # download a remote/data-URL image (blob + fallback)
-  refs.ts               # isAllowedReference host allowlist for the overview ref
-  api.ts                # client fetch helpers; branches on IS_STATIC
-  image.ts              # data URL validation helper (dataUrlToInline)
-  types.ts              # shared types (DesignBrief, RoomType, responses)
+  room/   types catalog styles materials kit constants geometry shell scene viewport
+          shots place commands read furnish samples blender  furniture/{index,bedroom,living,other}
+  ai/     client run google kie kiePoll prompts
+  planFile.ts  download.ts  imageProxy.ts
 ```
 
-### Where things live
-- **Prompt / "geometry" tuning:** `lib/prompts.ts`. Both prompts request a true
-  parallel (axonometric/isometric) projection — no perspective foreshortening.
-  The room prompt varies furnishing/styling by `variation` so Regenerate
-  produces a genuinely different take while keeping the same walls.
-- **Model call + error handling:** `lib/kie.ts` (`generateImage`,
-  `KieError` with an HTTP status; maps kie.ai codes 401/402/429 etc.). Routes
-  map errors to clean JSON responses.
-- **Selection → crop (of the 2D plan):** `RoomSelector.tsx` reports a rect in natural pixels;
-  `lib/crop.ts` does the full-resolution crop on a `<canvas>`.
-
-## Development workflow
+## Development
 
 ```bash
 npm install
-cp .env.local.example .env.local   # set KIE_API_KEY
+cp .env.local.example .env.local   # optional server key (GOOGLE_API_KEY or KIE_API_KEY)
 npm run dev        # http://localhost:3000
 npm run build      # production build (also runs lint + typecheck)
-npm run start      # serve the production build
-npm run lint       # eslint (next lint)
+npm run start
+npm run lint       # next lint
 npm run typecheck  # tsc --noEmit
 ```
 
-Live generation needs a kie.ai key with credit and `nano-banana-2` access.
-Without it the UI runs but generation calls return an error surfaced in the UI.
+Verifying rendering headlessly is done with Playwright and Chromium:
+`executablePath: /opt/pw-browsers/chromium` with args `--use-gl=angle
+--use-angle=swiftshader --enable-unsafe-swiftshader`. A throwaway page can
+call `RoomViewport.capture` and save the PNGs.
+
+## Build modes
+
+- **Server (default):** `app/api/ai` exists, and visitors without a key use
+  the server's.
+- **Static (GitHub Pages):** set `STATIC_EXPORT=true`,
+  `NEXT_PUBLIC_STATIC=true` and `NEXT_PUBLIC_BASE_PATH=/planto3d`.
+  `.github/workflows/pages.yml` removes `app/api` before the export. Every AI
+  call runs in the browser with the visitor's key. Google's Gemini API allows
+  browser calls. kie.ai calls depend on kie.ai CORS.
+- `.github/workflows/ci.yml` runs lint, typecheck and build.
 
 ## Conventions
 
-- TypeScript strict mode; path alias `@/*` maps to the repo root.
-- Server-only modules import `"server-only"` and read secrets from `process.env`.
-- API routes validate input (image present, size cap) and return
-  `{ image, mimeType }` on success or `{ error }` with a proper status.
-- Keep the kie.ai key server-side: never import `lib/kie.ts` into a client
-  component (`"use client"` files).
-
-## Build modes (server vs static)
-
-- **Server (default):** API routes hold `KIE_API_KEY`; deploy to Vercel/Node.
-- **Static (GitHub Pages):** `STATIC_EXPORT=true` + `NEXT_PUBLIC_STATIC=true`
-  builds a client-only export (`next.config.js` switches on these). There are no
-  API routes, so generation runs in the browser via `lib/kieBrowser.ts`, using a
-  user-supplied key entered in `components/ApiKeyBar.tsx` (localStorage, never
-  committed). `lib/api.ts` branches on `IS_STATIC`. The Pages workflow
-  (`.github/workflows/pages.yml`) strips `app/api` before the export build (POST
-  route handlers can't be statically exported) and deploys to Pages.
-- Browser → kie.ai calls in the static build depend on kie.ai CORS; if blocked,
-  use the server build. Keep both paths working when changing the kie.ai layer.
+- TypeScript strict, and `@/*` maps to the repo root.
+- `lib/room` is three.js-free except `kit`, `materials`, `shell`, `scene`,
+  `viewport`, `blender` and `furniture/*`. Those are loaded dynamically
+  (browser only).
+- Every model change goes through `applyOps` or the reducer's `edit`, so undo
+  works. Never mutate a `RoomModel` in place.
+- Keys: never commit one, and never bundle a server key. Browser keys live
+  only in localStorage and go only to the chosen provider.
 
 ## Git workflow
 
-- Develop on feature branches; do not push directly to the default branch.
-- Write clear, descriptive commit messages.
-- Open pull requests (draft first) for review before merging.
+- Develop on feature branches. Never push directly to the default branch.
+- Write clear commit messages, and open draft PRs for review.
 
 ## Open / future decisions
 
-- **Room rectangles are axis-aligned boxes**: L-shaped rooms come out as
-  their bounding box. Editing the house model itself (move a wall, split a
-  room) is not yet possible; only the per-room layout is editable.
-- **Render from inside the house model** — the room render still uses the
-  room-only `assembleScene` (door leaves closed, so nothing beyond them
-  shows); the house model is the source of the room's layout, not yet its
-  render context.
-- **Projection default** — currently the prompt allows isometric-ish
-  axonometric; pin an exact angle if consistency matters.
-- **Persistence/history** across sessions (currently in-memory React state).
-- **Multi-image consistency** — `nano-banana-2` accepts up to 14 input images
-  (`image_input`); could feed the overview + crop together for more faithful
-  rooms (`generateImage` already takes an array of inputs).
+- **Rectangular rooms only:** L-shaped rooms and angled walls are not modelled
+  yet.
+- **One room at a time:** the whole-house model of the old pipeline was
+  removed with it.
+- **Real Blender rendering in the app** would need a render server (Blender
+  on a GPU host) behind `/api`. Today the app exports a package that renders
+  in the user's Blender.
+- **Plan reading accuracy** depends on the drawing. Low-contrast scans or
+  plans without printed dimensions get an estimated scale, flagged in the UI.
+- **Shots/realistic history** is in memory. Only the room model autosaves.
 
 ## Notes for AI assistants
 
-- This file is the source of truth for product intent and conventions — keep it
-  accurate; fix anything outdated as part of your change.
-- Don't invent commands or structure; the layout above reflects real files.
-- When the structure changes, regenerate the relevant sections from the actual
-  files and `package.json` scripts.
+- This file is the source of truth for product intent: keep it accurate, and
+  fix anything outdated as part of your change.
+- Don't invent commands or structure. The layout above lists the real files.
