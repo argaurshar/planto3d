@@ -24,6 +24,9 @@ jobs:
       NEXT_PUBLIC_BASE_PATH: /planto3d
       STATIC_EXPORT: "true"
       NEXT_PUBLIC_STATIC: "true"
+      # Optional: the Blender render server's address (repo Settings → Variables →
+      # BLENDER_SERVER_URL). Its token is never built in; users type it in the app.
+      NEXT_PUBLIC_BLENDER_SERVER_URL: ${{ vars.BLENDER_SERVER_URL }}
     steps:
       - uses: actions/checkout@v4
 

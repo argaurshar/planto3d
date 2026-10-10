@@ -6,6 +6,16 @@
 const isStatic = process.env.STATIC_EXPORT === "true";
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
 
+// The Blender renderer (blender-server/voxa_render.py) is imported as text so
+// the download package and the render server run the very same script.
+const withPythonSource = (config) => ({
+  ...config,
+  webpack: (wp) => {
+    wp.module.rules.push({ test: /\.py$/, type: "asset/source" });
+    return wp;
+  },
+});
+
 const nextConfig = isStatic
   ? {
       reactStrictMode: true,
@@ -23,4 +33,4 @@ const nextConfig = isStatic
       },
     };
 
-module.exports = nextConfig;
+module.exports = withPythonSource(nextConfig);
