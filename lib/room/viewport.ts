@@ -21,6 +21,7 @@ interface ViewportModules {
   UnrealBloomPass: typeof import("three/examples/jsm/postprocessing/UnrealBloomPass.js").UnrealBloomPass;
   OutputPass: typeof import("three/examples/jsm/postprocessing/OutputPass.js").OutputPass;
   RoomEnvironment: typeof import("three/examples/jsm/environments/RoomEnvironment.js").RoomEnvironment;
+  Reflector: typeof import("three/examples/jsm/objects/Reflector.js").Reflector;
 }
 
 let modules: Promise<ViewportModules> | null = null;
@@ -28,7 +29,7 @@ let modules: Promise<ViewportModules> | null = null;
 export function loadViewportModules(): Promise<ViewportModules> {
   if (!modules) {
     modules = (async () => {
-      const [T, oc, ec, rp, gt, ub, op, re, ra] = await Promise.all([
+      const [T, oc, ec, rp, gt, ub, op, re, ra, rf] = await Promise.all([
         loadThree(),
         import("three/examples/jsm/controls/OrbitControls.js"),
         import("three/examples/jsm/postprocessing/EffectComposer.js"),
@@ -38,6 +39,7 @@ export function loadViewportModules(): Promise<ViewportModules> {
         import("three/examples/jsm/postprocessing/OutputPass.js"),
         import("three/examples/jsm/environments/RoomEnvironment.js"),
         import("three/examples/jsm/lights/RectAreaLightUniformsLib.js"),
+        import("three/examples/jsm/objects/Reflector.js"),
       ]);
       ra.RectAreaLightUniformsLib.init();
       return {
@@ -49,6 +51,7 @@ export function loadViewportModules(): Promise<ViewportModules> {
         UnrealBloomPass: ub.UnrealBloomPass,
         OutputPass: op.OutputPass,
         RoomEnvironment: re.RoomEnvironment,
+        Reflector: rf.Reflector,
       };
     })();
   }
@@ -80,6 +83,7 @@ export class RoomViewport {
   private disposed = false;
   private ro: ResizeObserver | null = null;
   private clay = false;
+  private reflectors: import("three/examples/jsm/objects/Reflector.js").Reflector[] = [];
   /** Called when the user orbits away from a preset shot. */
   onFreeCamera: (() => void) | null = null;
 
@@ -175,10 +179,12 @@ export class RoomViewport {
   setRoom(model: RoomModel, opts: ViewportOptions = {}): void {
     const keepShot = this.shot;
     this.clay = Boolean(opts.clay);
+    this.disposeMirrors();
     this.room?.dispose();
     this.selectionBox = null;
     this.model = model;
     this.room = buildRoomScene(this.mods.T, model, { clay: this.clay });
+    this.addMirrors();
     this.room.scene.environment = this.env;
     this.room.scene.environmentIntensity = this.clay ? 0.9 : 0.45;
     this.hidden = [];
@@ -189,6 +195,46 @@ export class RoomViewport {
     else if (!this.camera.position.lengthSq()) this.frameRoom();
     if (this.selectedId) this.select(this.selectedId);
     this.requestRender();
+  }
+
+  /**
+   * Mirrors reflect the room. The scene (shared with the Blender export) gives
+   * them a mirror material, which Cycles renders correctly; here each one also
+   * gets a planar reflector on its face, since a WebGL mirror material only
+   * shows the environment map (it read as a flat white panel).
+   */
+  private addMirrors(): void {
+    if (!this.room || this.clay) return;
+    const THREE = this.THREE;
+    const mirrorMat = this.room.materials.mirror();
+    const meshes: import("three").Mesh[] = [];
+    this.room.root.traverse((o) => {
+      const mesh = o as import("three").Mesh;
+      if (mesh.isMesh && mesh.material === mirrorMat) meshes.push(mesh);
+    });
+    for (const mesh of meshes) {
+      mesh.geometry.computeBoundingBox();
+      const bb = mesh.geometry.boundingBox!;
+      const flat = bb.max.z - bb.min.z < 1e-4;
+      const geo = flat ? mesh.geometry.clone() : new THREE.PlaneGeometry(bb.max.x - bb.min.x, bb.max.y - bb.min.y);
+      const r = new this.mods.Reflector(geo, { clipBias: 0.003, textureWidth: 1024, textureHeight: 1024, color: 0xc9cfd2 });
+      r.name = "mirror";
+      r.userData.itemId = mesh.userData.itemId;
+      r.quaternion.copy(mesh.quaternion);
+      r.scale.copy(mesh.scale);
+      const offset = flat ? new THREE.Vector3(0, 0, 0.0015) : new THREE.Vector3((bb.max.x + bb.min.x) / 2, (bb.max.y + bb.min.y) / 2, bb.max.z + 0.0015);
+      r.position.copy(mesh.position).add(offset.applyQuaternion(mesh.quaternion));
+      mesh.parent?.add(r);
+      this.reflectors.push(r);
+    }
+  }
+
+  private disposeMirrors(): void {
+    for (const r of this.reflectors) {
+      r.removeFromParent();
+      r.dispose();
+    }
+    this.reflectors = [];
   }
 
   /** An overview from above one corner, used before any shot is chosen. */
@@ -404,6 +450,7 @@ export class RoomViewport {
     this.ro?.disconnect();
     this.controls.dispose();
     this.composer?.dispose();
+    this.disposeMirrors();
     this.room?.dispose();
     this.env?.dispose();
     this.renderer.dispose();

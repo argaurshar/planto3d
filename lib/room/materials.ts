@@ -212,12 +212,14 @@ function paintFabric(seed = 5): HTMLCanvasElement {
   const S = 512;
   const [c, ctx] = canvas(S);
   const img = ctx.createImageData(S, S);
-  const mottle = makeNoise(8, seed);
-  const fine = makeNoise(128, seed + 1);
+  // A fine, even weave. Large-scale mottling read as stains on a white duvet,
+  // so the colour variation stays small and soft.
+  const mottle = makeNoise(4, seed);
+  const fine = makeNoise(64, seed + 1);
   for (let y = 0; y < S; y++) {
     for (let x = 0; x < S; x++) {
-      const weave = ((x >> 2) + (y >> 2)) % 2 === 0 ? 0.04 : -0.04;
-      const t = 0.9 + weave + (mottle(x / S, y / S) - 0.5) * 0.12 + (fine(x / S, y / S) - 0.5) * 0.1;
+      const weave = ((x >> 1) + (y >> 1)) % 2 === 0 ? 0.018 : -0.018;
+      const t = 0.94 + weave + (mottle(x / S, y / S) - 0.5) * 0.03 + (fine(x / S, y / S) - 0.5) * 0.03;
       const val = Math.max(0, Math.min(255, t * 255));
       const i = (y * S + x) * 4;
       img.data[i] = val;
@@ -571,7 +573,8 @@ export class Materials {
   }
 
   screen(): Mat {
-    return this.memo("screen", () => new this.THREE.MeshPhysicalMaterial({ color: 0x0b0c0e, roughness: 0.08, clearcoat: 1 }));
+    // Satin-glossy: a lamp shows as a soft sheen, not a pin-point hot spot.
+    return this.memo("screen", () => new this.THREE.MeshPhysicalMaterial({ color: 0x0b0c0e, roughness: 0.34, clearcoat: 0.35, clearcoatRoughness: 0.22 }));
   }
 
   floor(kind: FloorFinish): Mat {

@@ -128,6 +128,27 @@ export class Kit {
     return this.finish(parent, geo, mat, x, y, z, o);
   }
 
+  /**
+   * A pillow or cushion: a soft panel w×h, t thick in the middle, pinched to a
+   * seam all round, with the sides drawn in so the corners stand out the way a
+   * stuffed cover does. Its faces look along ±z; centred at (x, y, z).
+   */
+  pillow(parent: Object3D, w: number, h: number, t: number, mat: Material, x = 0, y = 0, z = 0, o: PartOpts = {}): Mesh {
+    const geo = new this.THREE.BoxGeometry(1, 1, 1, 18, 14, 2);
+    const pos = geo.getAttribute("position");
+    for (let i = 0; i < pos.count; i++) {
+      const u = Math.max(-1, Math.min(1, pos.getX(i) * 2));
+      const v = Math.max(-1, Math.min(1, pos.getY(i) * 2));
+      const side = Math.sign(pos.getZ(i));
+      const puff = Math.pow(1 - Math.pow(Math.abs(u), 2.4), 0.55) * Math.pow(1 - Math.pow(Math.abs(v), 2.4), 0.55);
+      const drawX = 1 - 0.07 * (1 - v * v);
+      const drawY = 1 - 0.09 * (1 - u * u);
+      pos.setXYZ(i, (u / 2) * w * drawX, (v / 2) * h * drawY, side * (t / 2) * Math.max(0.06, puff));
+    }
+    geo.computeVertexNormals();
+    return this.finish(parent, geo, mat, x, y, z, o);
+  }
+
   /** A cylinder (radius top/bottom) of height h centred at (x, y, z). */
   cyl(parent: Object3D, rt: number, rb: number, h: number, mat: Material, x = 0, y = 0, z = 0, seg = 28, o: PartOpts = {}): Mesh {
     const geo = new this.THREE.CylinderGeometry(rt, rb, h, seg);

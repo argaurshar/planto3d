@@ -91,10 +91,15 @@ walls.
   `minimal`, `indian-contemporary`), plus colour and wood words.
 - `materials.ts` paints procedural canvas textures (wood, planks, marble,
   tiles, fabric, cane, rugs, art, exterior) and supplies a `Materials` cache
-  with a clay mode. `resolveFinish` reads finish words such as "walnut",
+  with a clay mode. Fabric is a fine, even weave; large-scale mottling read as
+  stains. TV screens are satin rather than mirror-glossy, so lamps don't show
+  as hot spots. `resolveFinish` reads finish words such as "walnut",
   "emerald velvet", "white marble" or "#aabbcc".
 - `kit.ts`: `loadThree()`, `Kit` (box/rbox/cyl… helpers) and `worldUV` (UVs in
-  world metres).
+  world metres). `Kit.pillow` makes a real pillow shape: puffy in the middle,
+  pinched to a seam, with the sides drawn in. Beds are dressed with sleeping
+  pillows leaning on the headboard, a square cushion in front of each, and a
+  lumbar cushion; the old tube-shaped rounded boxes read as bones.
 - `furniture/{bedroom,living,other}.ts` hold one builder per type and
   variant, in a local frame (front +z). `furniture/index.ts` `buildItem`
   names each group `item:<id>`.
@@ -109,7 +114,10 @@ walls.
   ACES, exposure 0.85, PCF shadows, GTAO, bloom only above 1.6, OutputPass).
   It offers `setRoom`, `setShot` (level camera plus lens shift), `capture`,
   `pick`, `floorPoint` and `previewMove`. A preset shot is left only when the
-  camera actually moves.
+  camera actually moves. Meshes with the mirror material also get a planar
+  `Reflector` on their face in the viewport only; the Blender export keeps the
+  plain mirror material, which Cycles renders correctly. Without it a WebGL
+  mirror showed only the environment map, as a flat white panel.
 - `shots.ts` computes the preset shots from the model:
   - **Entry** stands 0.5 m inside the main door at eye level 1.55 m, looking
     between the room centre and the main piece.
