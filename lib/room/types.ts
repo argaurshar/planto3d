@@ -28,6 +28,9 @@ export type RoomKind =
 
 export type FloorFinish = "wood" | "tile" | "marble" | "carpet";
 
+/** Design of a false ceiling: a cove-lit perimeter band, a floating island, or a band with a wooden slat panel. */
+export type CeilingDesign = "cove" | "island" | "slats";
+
 /** Time of day the room is lit for: daylight, golden-hour evening, or night with only its own lights. */
 export type Mood = "day" | "evening" | "night";
 
@@ -121,8 +124,10 @@ export interface RoomModel {
   depth: number;
   /** Floor to (true) ceiling height in metres. */
   height: number;
-  /** A perimeter false ceiling with cove light and downlights. */
+  /** A false ceiling with hidden LED and downlights (its design in `ceilingDesign`). */
   falseCeiling: boolean;
+  /** Design of the false ceiling; absent means "cove". */
+  ceilingDesign?: CeilingDesign;
   /** Curtains on every window. */
   curtains: boolean;
   floor: FloorFinish;

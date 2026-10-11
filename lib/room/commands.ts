@@ -7,10 +7,10 @@
 // understand) returns the SAME operations as JSON, so nothing — local or AI —
 // ever edits the room except through `applyOps`, which validates and places.
 
-import type { Dir, FloorFinish, Item, ItemType, Mood, RoomKind, RoomModel, StyleId, Wall } from "./types";
+import type { CeilingDesign, Dir, FloorFinish, Item, ItemType, Mood, RoomKind, RoomModel, StyleId, Wall } from "./types";
 import { CATALOG, ITEM_TYPES, itemLabel, normalize, typeFromWords, ROOM_KINDS } from "./catalog";
 import { COLOR_WORDS, STYLES, STYLE_IDS } from "./styles";
-import { clamp, dirVec, footprint, mainItem, opposite, round2, wallOfDir } from "./geometry";
+import { CEILING_DESIGNS, ceilingDesignOf, clamp, dirVec, footprint, mainItem, opposite, round2, wallOfDir } from "./geometry";
 import { againstWallAt, clampInside, dirFromVec, fitOnWall, newId, placeNew, settle, wallLen } from "./place";
 import { WALL_CLEAR } from "./constants";
 import { nearestWallAt, resizeRoom } from "./planFit";
@@ -64,6 +64,8 @@ export type Op =
       wallColor?: string;
       floor?: FloorFinish;
       falseCeiling?: boolean;
+      /** A false ceiling design, or "next" to cycle (adds a false ceiling if there is none). */
+      ceilingDesign?: CeilingDesign | "next";
       curtains?: boolean;
       height?: number;
       style?: StyleId;
@@ -89,6 +91,13 @@ export interface ApplyResult {
 }
 
 const WALLS: Wall[] = ["top", "bottom", "left", "right"];
+
+/** How the app names each false ceiling design. */
+export const CEILING_WORDS: Record<CeilingDesign, string> = {
+  cove: "cove-lit perimeter band",
+  island: "floating island with hidden LED",
+  slats: "wooden slat panel in a cove band",
+};
 const DIRS: Dir[] = ["up", "down", "left", "right"];
 
 function variantOf(type: ItemType, variant: string | undefined): string {
@@ -140,7 +149,15 @@ export function applyOps(room0: RoomModel, ops: Op[]): ApplyResult {
         }
         if (typeof op.falseCeiling === "boolean") {
           r.falseCeiling = op.falseCeiling;
-          notes.push(op.falseCeiling ? "false ceiling with cove light added" : "false ceiling removed");
+          notes.push(op.falseCeiling ? `false ceiling added (${CEILING_WORDS[ceilingDesignOf(r)]})` : "false ceiling removed");
+        }
+        if (op.ceilingDesign && (op.ceilingDesign === "next" || CEILING_DESIGNS.includes(op.ceilingDesign))) {
+          const cur = ceilingDesignOf(r);
+          const next = op.ceilingDesign === "next" ? (r.falseCeiling ? CEILING_DESIGNS[(CEILING_DESIGNS.indexOf(cur) + 1) % CEILING_DESIGNS.length] : cur) : op.ceilingDesign;
+          r.falseCeiling = true;
+          if (next === "cove") delete r.ceilingDesign;
+          else r.ceilingDesign = next;
+          notes.push(`ceiling design → ${CEILING_WORDS[next]}`);
         }
         if (typeof op.curtains === "boolean") {
           r.curtains = op.curtains;
@@ -605,6 +622,24 @@ export function parseCommand(room: RoomModel, text: string, ctx: CommandContext)
     }
 
     // Room-level edits.
+    // Ceiling design: "change ceiling design", "wooden slat ceiling", "floating ceiling", "plain ceiling".
+    if (/\bceiling\b/.test(clause) && !type && !has(VERB.remove) && !/\b(height|high|tall|colou?r|paint)\b/.test(clause)) {
+      const named = /\b(island|floating|raft)\b/.test(clause)
+        ? "island"
+        : /\b(slat|slats|slatted|wooden|wood|batten|rafter|louver|louvre)\b/.test(clause)
+          ? "slats"
+          : /\b(cove|peripheral|perimeter|band)\b/.test(clause)
+            ? "cove"
+            : null;
+      if (/\b(plain|flat|simple|no false)\b/.test(clause)) {
+        ops.push({ op: "room", falseCeiling: false });
+        continue;
+      }
+      if (named || /\b(design|style|look|type|pattern)\b/.test(clause) || has(VERB.change)) {
+        ops.push({ op: "room", ceilingDesign: named ?? "next" });
+        continue;
+      }
+    }
     if (/\b(false ceiling|pop ceiling|gypsum ceiling|cove)\b/.test(clause)) {
       ops.push({ op: "room", falseCeiling: !has(VERB.remove) && !/\b(plain|flat)\b/.test(clause) });
       continue;
@@ -891,6 +926,7 @@ export function sanitizeOps(room: RoomModel, raw: unknown): Op[] {
           wallColor: typeof o.wallColor === "string" && /^#[0-9a-f]{6}$/i.test(o.wallColor) ? o.wallColor : undefined,
           floor: ["wood", "tile", "marble", "carpet"].includes(o.floor as string) ? (o.floor as FloorFinish) : undefined,
           falseCeiling: typeof o.falseCeiling === "boolean" ? o.falseCeiling : undefined,
+          ceilingDesign: o.ceilingDesign === "next" || CEILING_DESIGNS.includes(o.ceilingDesign as CeilingDesign) ? (o.ceilingDesign as CeilingDesign | "next") : undefined,
           curtains: typeof o.curtains === "boolean" ? o.curtains : undefined,
           height: n(o.height),
           style: STYLE_IDS.includes(o.style as StyleId) ? (o.style as StyleId) : undefined,

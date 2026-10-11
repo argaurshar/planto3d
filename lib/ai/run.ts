@@ -34,7 +34,7 @@ export async function runReadPlan(p: Provider, image: string, hint?: string): Pr
       }
     }
     const url = await kieUpload(image, p.key, `plan-${Date.now()}.png`);
-    return kieChat(p.key, KIE_MODELS.reader(), PLAN_READER_SYSTEM, planReaderUser(hint), [url]);
+    return kieChat(p.key, KIE_MODELS.reader(), PLAN_READER_SYSTEM, planReaderUser(hint), [url], { effort: "high" });
   };
   let lastErr: unknown = null;
   for (let attempt = 0; attempt < 2; attempt++) {

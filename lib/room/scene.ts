@@ -7,8 +7,9 @@ import type { ThreeBundle } from "./kit";
 import { Kit } from "./kit";
 import { Materials } from "./materials";
 import { buildItem, type BuildCtx } from "./furniture";
-import { buildDaylight, buildShell, FALSE_CEILING_DROP } from "./shell";
+import { buildDaylight, buildShell } from "./shell";
 import { moodOf, moodSpec } from "./moods";
+import { wallCeiling } from "./geometry";
 
 type Scene = import("three").Scene;
 type Group = import("three").Group;
@@ -40,7 +41,7 @@ export function buildRoomScene(T: ThreeBundle, room: RoomModel, opts: SceneOptio
   const scene = new THREE.Scene();
   scene.background = new THREE.Color("#d9d6d0");
   const root = k.group(scene, "room");
-  const ceilingClear = room.falseCeiling ? room.height - FALSE_CEILING_DROP : room.height;
+  const ceilingClear = wallCeiling(room);
   const ctx: BuildCtx = { k, m: materials, p: materials.palette, style: room.style, room, ceilingClear };
 
   buildShell(ctx, root);
