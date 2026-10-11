@@ -9,6 +9,7 @@ import { CATALOG, ITEM_TYPES, itemLabel } from "../room/catalog";
 import { STYLES, STYLE_IDS, COLOR_WORDS } from "../room/styles";
 import { describeItem } from "../room/commands";
 import { itemsInView } from "../room/shots";
+import { moodSpec } from "../room/moods";
 
 export const PLAN_READER_SYSTEM = `You are an architect reading a 2D architectural floor plan image, measuring it precisely for a true-scale 3D model.
 The image shows ONE room to be modelled (if it shows several rooms, read the single largest room, or the room named in the user's hint).
@@ -19,16 +20,16 @@ Return ONLY a JSON object, no prose:
   "room_type": "bedroom | living | dining | kitchen | bathroom | study | kids | other",
   "room_box": [ymin, xmin, ymax, xmax],
   "printed_size": { "horizontal": "printed length of the room's left-to-right side, exactly as printed, e.g. 12'0\\" or 3600", "vertical": "printed length of its top-to-bottom side" },
-  "openings": [ { "kind": "door | window | sliding | opening", "box": [ymin, xmin, ymax, xmax], "main": true | false } ],
-  "items": [ { "label": "what the symbol is, e.g. king size bed, side table, wardrobe, TV unit, 3 seater sofa, armchair, coffee table, dining table, study table, chair, dresser, bookshelf, plant, rug", "box": [ymin, xmin, ymax, xmax], "head": "top | bottom | left | right (beds only: the side where the pillows / headboard are)", "front": "top | bottom | left | right (the side a person uses: sofa seat, wardrobe doors, TV screen, desk front); omit if unclear" } ]
+  "openings": [ { "kind": "door | window | sliding_door | opening", "box": [ymin, xmin, ymax, xmax], "main": true | false } ],
+  "items": [ { "label": "what the symbol is, e.g. king size bed, side table, wardrobe, TV unit, 3 seater sofa, armchair, coffee table, dining table, study table, chair, dresser, bookshelf, plant, rug, ceiling fan, split AC", "box": [ymin, xmin, ymax, xmax], "head": "top | bottom | left | right (beds only: the side where the pillows / headboard are)", "front": "top | bottom | left | right (the side a person uses: sofa seat, wardrobe doors, TV screen, desk front); omit if unclear" } ]
 }
 
 Rules:
 - Coordinates are integers 0-1000 relative to the WHOLE image, y first: [ymin, xmin, ymax, xmax]. Boxes must be tight.
 - room_box is the INSIDE faces of the room's four walls (the floor area), not the outer wall lines and not the dimension lines.
 - printed_size: copy the room's own dimension text (often written inside the room under its name as "12'0\\" X 14'0\\"", or on dimension lines). "horizontal" is the width as drawn (left-right), "vertical" the depth (top-bottom). Use null if not printed. Never compute or guess a number.
-- openings: every door (box = the gap in the wall plus its swing arc), window (box = the window symbol on the wall), sliding / balcony door, or open archway in THIS room's walls. "main": true for the ONE door people enter by from the rest of the house (not a bathroom, toilet, balcony or wardrobe door).
-- items: EVERY furniture or fixture symbol drawn inside the room, one entry each (two side tables → two entries). Do not invent furniture that is not drawn. Dimension lines, text, hatching, columns and walls are not items.`;
+- openings: every door (box = the gap in the wall plus its swing arc), window (box = the window symbol on the wall; a sliding or "slider" window is still a window), sliding_door (a full-height sliding or balcony door only), or open archway in THIS room's walls. "main": true for the ONE door people enter by from the rest of the house (not a bathroom, toilet, balcony or wardrobe door).
+- items: EVERY furniture or fixture symbol drawn inside the room, one entry each (two side tables → two entries). A ceiling fan is usually a circle with blades (box = the circle); an AC is a labelled box on a wall (box = the unit, "front" = the side facing into the room). Do not invent furniture that is not drawn. Dimension lines, text, hatching, columns and walls are not items.`;
 
 export function planReaderUser(hint?: string): string {
   return hint?.trim() ? `Hint from the user: ${hint.trim().slice(0, 200)}\nRead the plan.` : "Read the plan.";
@@ -52,7 +53,7 @@ Operations:
 {"op":"add","type":TYPE,"variant":DESIGN,"finish":"walnut","wall":"left","near":"ITEM_ID","count":1}   — omit x/z to let the app place it properly (preferred), or give "x","z","w","d","h","facing".
 {"op":"remove","ids":["ITEM_ID"]}
 {"op":"update","ids":["ITEM_ID"],"variant":DESIGN,"nextVariant":true,"finish":"emerald velvet" or null,"dx":0.3,"dz":0,"x":1.2,"z":2.0,"w":1.8,"d":2.1,"h":1.2,"facing":"down","rotate":90,"wall":"right"}
-{"op":"room","wallColor":"#rrggbb","floor":"wood|tile|marble|carpet","falseCeiling":true,"curtains":true,"height":3.0,"style":STYLE}
+{"op":"room","wallColor":"#rrggbb","floor":"wood|tile|marble|carpet","falseCeiling":true,"curtains":true,"height":3.0,"style":STYLE,"mood":"day|evening|night"}
 {"op":"shot","shot":"entry|back|front|corner|top|next"}
 
 Only use the fields you need. Use existing item ids from the room. Keep everything inside the room. Never remove or move things the user did not mention.
@@ -72,6 +73,7 @@ export function commandUser(room: RoomModel, text: string, selectedId: string | 
     wallColor: room.wallColor,
     falseCeiling: room.falseCeiling,
     curtains: room.curtains,
+    mood: room.mood ?? "day",
     openings: room.openings.map((o) => ({ id: o.id, kind: o.kind, wall: o.wall, offset: o.offset, width: o.width, main: o.main || undefined })),
     items: room.items.map((i) => ({ id: i.id, type: i.type, variant: i.variant, finish: i.finish, x: i.x, z: i.z, w: i.w, d: i.d, h: i.h, facing: i.facing })),
   };
@@ -131,7 +133,8 @@ export function realisticPrompt(room: RoomModel, shot: Shot | null, extra = ""):
     pieces ? `The furniture in the picture is exactly this, and nothing else: ${pieces}.` : "There is no furniture in the picture; keep it that way.",
     "Wherever the render shows plain wall, plain floor or plain ceiling, it stays plain: no cabinets, wardrobes, shelves, doors, windows, art, mirrors, plants, lamps or rugs are added anywhere.",
     `Floor: a ${floorWords(room)}, exactly as light or dark as in the render, same plank direction${hasRug ? "" : ", no rug"}; do not darken or recolour it. Walls: the same paint colour as the render (${room.wallColor}).`,
-    "Change only how it looks: real materials with true texture (wood grain, fabric weave, stone veining, paint), soft natural daylight from the windows with physically correct soft shadows, bounce light and ambient occlusion, gentle warm glow from the lights that are on, accurate reflections, subtle real-life detail (fabric creases, slight imperfections). Sharp focus, natural colour, straight verticals, high dynamic range.",
+    "Change only how it looks: real materials with true texture (wood grain, fabric weave, stone veining, paint), physically correct soft shadows, bounce light and ambient occlusion, accurate reflections, subtle real-life detail (fabric creases, slight imperfections). Sharp focus, natural colour, straight verticals, high dynamic range.",
+    `Light: ${moodSpec(room).words}`,
     `Style: ${style.describe}.`,
     extra.trim() ? `Also: ${extra.trim().slice(0, 300)}` : "",
     "No people, no text, no watermark.",

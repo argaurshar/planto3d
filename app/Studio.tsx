@@ -16,7 +16,9 @@ import { autoFurnish, blankRoom } from "@/lib/room/furnish";
 import { normalizeRoom } from "@/lib/room/place";
 import { formatSize } from "@/lib/room/geometry";
 import { itemLabel } from "@/lib/room/catalog";
-import { cropPlan, loadPlanFile, type PlanImage } from "@/lib/planFile";
+import { cropPlan, loadPlanFile, loadPlanImage, savePlanImage, type PlanImage } from "@/lib/planFile";
+import { placeOpening, refitPlan, resizeRoom } from "@/lib/room/planFit";
+import { MOOD_SPECS, MOODS, moodOf } from "@/lib/room/moods";
 import { aiCommand, aiLabel, aiReadPlan, aiRealistic, currentProvider, IS_STATIC } from "@/lib/ai/client";
 import Viewport3D, { type Viewport3DHandle } from "./components/studio/Viewport3D";
 import ShotBar from "./components/studio/ShotBar";
@@ -27,6 +29,7 @@ import ShotGallery, { type ShotRecord } from "./components/studio/ShotGallery";
 import { getRenderServer, RENDER_SERVER_EVENT, renderInBlender, type Quality } from "@/lib/room/renderServer";
 import StartScreen from "./components/StartScreen";
 import PlanStep from "./components/PlanStep";
+import PlanCheck from "./components/studio/PlanCheck";
 
 // ------------------------------------------------------------ model + history
 
@@ -104,8 +107,9 @@ function suggestionsFor(room: RoomModel, selectedId: string | null): string[] {
   } else if (has("sofa")) {
     s.push("Change sofa design", "Make the sofa emerald velvet", "Take shot from sofa back");
   }
+  s.push(moodOf(room) === "day" ? "Evening light" : moodOf(room) === "evening" ? "Night view" : "Daylight");
   s.push("Next shot");
-  return s.slice(0, 7);
+  return s.slice(0, 8);
 }
 
 let logSeq = 0;
@@ -125,6 +129,7 @@ export default function Studio() {
   const [viewShot, setViewShot] = useState<Shot | null>(null);
   const [activeShotId, setActiveShotId] = useState<string | null>(null);
   const [tab, setTab] = useState<"elements" | "room" | "plan">("elements");
+  const [view, setView] = useState<"3d" | "plan">("3d");
   const [pending, setPending] = useState<{ shot: Shot; replace?: string; nonce: number } | null>(null);
   const [capturing, setCapturing] = useState(false);
   const [saved, setSaved] = useState<RoomModel | null>(null);
@@ -192,9 +197,10 @@ export default function Studio() {
       try {
         const raw = await vp.current!.capture(pending.shot);
         if (cancelled) return;
+        const mood = moodOf(room);
         const rec: ShotRecord = {
           id: pending.replace ?? `shot-${pending.nonce}`,
-          label: pending.shot.label,
+          label: mood === "day" ? pending.shot.label : `${pending.shot.label} · ${MOOD_SPECS[mood].label.toLowerCase()}`,
           shot: pending.shot,
           raw,
           version: m.version,
@@ -244,6 +250,7 @@ export default function Studio() {
       setShots([]);
       setLog([]);
       setTab("elements");
+      setView("3d");
       setPhase("studio");
       setError(null);
       say("app", `${r.name}: ${formatSize(r.width, r.depth)}, ceiling ${r.height.toFixed(2)} m, ${r.items.length} pieces, ${r.openings.length} doors/windows.`, "ok");
@@ -292,8 +299,10 @@ export default function Studio() {
       try {
         const image = crop ? await cropPlan(plan, crop) : plan;
         const reading = await aiReadPlan(image.src, [kind ? `It is a ${kind}.` : "", hint].filter(Boolean).join(" "));
-        const { room: r, warnings } = readingToRoom(reading, { width: image.width, height: image.height }, { kind: kind ?? undefined });
+        const planRef = `p${Date.now().toString(36)}`;
+        const { room: r, warnings } = readingToRoom(reading, { width: image.width, height: image.height }, { kind: kind ?? undefined, planRef });
         setPlan(image);
+        void savePlanImage(planRef, image);
         const notes = [...warnings];
         if (!r.items.some((i) => i.type !== "rug")) notes.push("No furniture is drawn on this plan — press “Furnish it for me”, or add pieces by typing (e.g. “add a bed”).");
         enterStudio(r, notes);
@@ -316,7 +325,10 @@ export default function Studio() {
       for (const t of res.errors) say("app", t, "err");
       if (res.shot) {
         const s = resolveShot(res.room, res.shot);
-        if (s) takeShot(s);
+        if (s) {
+          setView("3d");
+          takeShot(s);
+        }
         else say("app", "That shot is not available for this room (it needs a main piece such as a bed or sofa).", "err");
       }
       if (!res.changed && !res.shot && !res.messages.length && !res.errors.length && !aiReply) say("app", "Nothing to change.", "info");
@@ -359,7 +371,38 @@ export default function Studio() {
     [room, m.selectedId, m.lastId, m.past.length, m.future.length, commit, say],
   );
 
-  const onRoomPanel = useCallback((next: RoomModel) => dispatch({ type: "edit", room: normalizeRoom(next) }), []);
+  const onRoomPanel = useCallback(
+    (next: RoomModel) => {
+      if (!room) return;
+      // A new size goes through resizeRoom: flush pieces stay flush, and a room read from a plan keeps its place on it.
+      const resized = next.width !== room.width || next.depth !== room.depth;
+      dispatch({ type: "edit", room: resized ? resizeRoom({ ...next, width: room.width, depth: room.depth }, next.width, next.depth) : normalizeRoom(next) });
+    },
+    [room],
+  );
+
+  // ------------------------------------------------------------ plan check
+
+  const onRefit = useCallback(
+    (box: [number, number, number, number]) => {
+      if (!room) return;
+      const r = refitPlan(room, box);
+      dispatch({ type: "edit", room: r });
+      say("app", `Walls re-fitted to your plan: ${formatSize(r.width, r.depth)}. Doors, windows and pieces kept their place on the drawing.`, "ok");
+    },
+    [room, say],
+  );
+
+  const onFitPlan = useCallback(
+    (box: [number, number, number, number]) => {
+      if (!room || !plan) return;
+      const ref = `p${Date.now().toString(36)}`;
+      void savePlanImage(ref, plan);
+      dispatch({ type: "edit", room: { ...room, plan: { ref, imageW: plan.width, imageH: plan.height, box } } });
+      say("app", "The model is now placed on your plan. Drag pieces, doors and windows to where the drawing has them.", "ok");
+    },
+    [room, plan, say],
+  );
 
   const onFurnish = useCallback(() => {
     if (!room) return;
@@ -465,7 +508,11 @@ export default function Studio() {
           enterStudio(r.room, [`Started from a ${formatSize(w, d)} room with one door and one window, furnished with a standard layout. Move the door and window in Room settings, and change anything by typing.`]);
         }}
         savedName={saved ? `${saved.name} (${formatSize(saved.width, saved.depth)})` : null}
-        onContinue={() => saved && enterStudio(saved)}
+        onContinue={() => {
+          if (!saved) return;
+          setPlan(saved.plan ? loadPlanImage(saved.plan.ref) : null);
+          enterStudio(saved);
+        }}
         error={error}
         busy={!!busy}
       />
@@ -515,6 +562,23 @@ export default function Studio() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <div className="flex gap-0.5 rounded-full bg-white/5 p-1 text-xs" role="group" aria-label="Lighting">
+            {MOODS.map((md) => {
+              const on = moodOf(room) === md;
+              return (
+                <button
+                  key={md}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => !on && applyOpsNow([{ op: "room", mood: md }])}
+                  className={`rounded-full px-2.5 py-1 transition ${on ? "bg-amber-300/20 text-amber-100" : "text-neutral-400 hover:text-white"}`}
+                  title={`${MOOD_SPECS[md].label} lighting for the 3D view, shots, Blender and the realistic pass`}
+                >
+                  {MOOD_SPECS[md].icon} {MOOD_SPECS[md].label}
+                </button>
+              );
+            })}
+          </div>
           <button type="button" onClick={() => setClay((c) => !c)} className="btn-outline min-h-0 px-3 py-1.5 text-xs" title="White clay model, to check the geometry">
             {clay ? "◐ Materials" : "◯ Clay"}
           </button>
@@ -538,16 +602,42 @@ export default function Studio() {
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="min-w-0 space-y-3">
-          <Viewport3D
-            ref={vp}
-            room={room}
-            clay={clay}
-            shot={viewShot}
-            selectedId={m.selectedId}
-            onSelect={(id) => dispatch({ type: "select", id })}
-            onMove={(id, x, z) => applyOpsNow([{ op: "update", ids: [id], x, z }])}
-            onFreeCamera={() => setActiveShotId(null)}
-          />
+          {plan && (
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex gap-1 rounded-full bg-white/5 p-1 text-xs">
+                {(["3d", "plan"] as const).map((v) => (
+                  <button key={v} type="button" onClick={() => setView(v)} className={`rounded-full px-3 py-1 transition ${view === v ? "bg-emerald-400/20 text-emerald-100" : "text-neutral-400 hover:text-white"}`}>
+                    {v === "3d" ? "3D model" : "Plan check"}
+                  </button>
+                ))}
+              </div>
+              {view === "plan" && <span className="text-[11px] text-neutral-500">Every correction here is an edit: undo works.</span>}
+            </div>
+          )}
+          <div className="relative">
+            <Viewport3D
+              ref={vp}
+              room={room}
+              clay={clay}
+              shot={viewShot}
+              selectedId={m.selectedId}
+              onSelect={(id) => dispatch({ type: "select", id })}
+              onMove={(id, x, z) => applyOpsNow([{ op: "update", ids: [id], x, z }])}
+              onFreeCamera={() => setActiveShotId(null)}
+            />
+            {view === "plan" && plan && (
+              <PlanCheck
+                room={room}
+                image={plan}
+                selectedId={m.selectedId}
+                onSelect={(id) => dispatch({ type: "select", id })}
+                onMoveItem={(id, x, z) => applyOpsNow([{ op: "update", ids: [id], x, z }])}
+                onMoveOpening={(id, x, z) => dispatch({ type: "edit", room: placeOpening(room, id, x, z) })}
+                onRefit={onRefit}
+                onFit={onFitPlan}
+              />
+            )}
+          </div>
           <ShotBar
             shots={presets}
             activeId={activeShotId}
@@ -555,6 +645,7 @@ export default function Studio() {
             onPick={(s) => {
               setActiveShotId(s.id);
               setViewShot(s);
+              setView("3d");
             }}
             onCapture={() => {
               const s = activeShotId ? presets.find((p) => p.id === activeShotId) : vp.current?.currentShot();
@@ -587,13 +678,42 @@ export default function Studio() {
           {tab === "plan" && (
             <div className="space-y-3 text-xs text-neutral-400">
               {plan ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={plan.src} alt="Your plan" className="w-full rounded-xl border border-white/10 bg-white" />
+                <>
+                  <button type="button" onClick={() => setView("plan")} className="block w-full overflow-hidden rounded-xl border border-white/10 bg-white" title="Open the plan check">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={plan.src} alt="Your plan" className="w-full" />
+                  </button>
+                  <button type="button" onClick={() => setView("plan")} className="btn-outline w-full min-h-0 px-3 py-1.5 text-xs">
+                    {room.plan ? "Check the model on the plan" : "Place the model on the plan"}
+                  </button>
+                  <p className="leading-relaxed">
+                    {room.plan
+                      ? "Plan check draws the model over your drawing: the dashed outline is the walls, green boxes are furniture (the heavy edge is the front), violet is wall-hung, orange is a door and blue a window. Drag anything that is off, or drag the outline’s handles onto the drawing’s inner wall lines."
+                      : "This room was set up by hand. Open the plan check and drag a box over the room’s inner wall lines, then drag pieces, doors and windows to where the drawing has them."}
+                  </p>
+                </>
+              ) : room.plan ? (
+                <p>The plan image for this room is not stored in this browser any more. Upload the plan again to check the model against it.</p>
               ) : (
                 <p>This room was not read from a plan.</p>
               )}
               <p className="leading-relaxed">
-                The plan was read once into the model. If anything differs from your plan, fix it in Elements or Room, or type it (“move the wardrobe to the right wall”). Compare with the <button type="button" className="underline" onClick={() => { const t = presets.find((p) => p.id === "top"); if (t) { setActiveShotId("top"); setViewShot(t); } }}>top view</button>.
+                You can also fix things in Elements or Room, or type them (“move the wardrobe to the right wall”), and compare with the{" "}
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={() => {
+                    const t = presets.find((p) => p.id === "top");
+                    if (t) {
+                      setActiveShotId("top");
+                      setViewShot(t);
+                      setView("3d");
+                    }
+                  }}
+                >
+                  top view
+                </button>
+                .
               </p>
             </div>
           )}

@@ -25,6 +25,8 @@ export interface CatalogEntry {
   wallMounted?: boolean;
   /** Lies flat on the floor (rug). */
   flat?: boolean;
+  /** Hangs from the ceiling (fan): its footprint is not on the floor, its `h` is the drop. */
+  ceilingMounted?: boolean;
   role: MaterialRole;
   variants: Variant[];
 }
@@ -303,6 +305,33 @@ export const CATALOG: Record<ItemType, CatalogEntry> = {
       { id: "arched", label: "Arched" },
       { id: "round", label: "Round" },
       { id: "rect", label: "Rectangle" },
+    ],
+  },
+  ceilingFan: {
+    label: "ceiling fan",
+    aliases: ["ceiling fan", "fan"],
+    size: { w: 1.2, d: 1.2, h: 0.42 },
+    range: { w: [0.6, 1.6], d: [0.6, 1.6] },
+    againstWall: false,
+    ceilingMounted: true,
+    role: "lacquer",
+    variants: [
+      { id: "classic", label: "Three blades on a downrod" },
+      { id: "wood", label: "Four wooden blades" },
+      { id: "light", label: "Flush, with a light" },
+    ],
+  },
+  ac: {
+    label: "split AC",
+    aliases: ["split ac", "split a.c.", "air conditioner", "air conditioning", "airconditioner", "aircon", "ac unit", "ac", "a.c.", "a.c"],
+    size: { w: 1.0, d: 0.24, h: 0.32 },
+    range: { w: [0.7, 1.3], d: [0.18, 0.32] },
+    againstWall: true,
+    wallMounted: true,
+    role: "lacquer",
+    variants: [
+      { id: "classic", label: "Classic rounded" },
+      { id: "slim", label: "Slim flat front" },
     ],
   },
   kitchenCounter: {

@@ -5,6 +5,7 @@
 
 import type { ItemType, RoomKind, RoomModel } from "./types";
 import { applyOps, type Op } from "./commands";
+import { round2 } from "./geometry";
 
 const LAYOUTS: Record<RoomKind, Op[]> = {
   bedroom: [
@@ -15,6 +16,8 @@ const LAYOUTS: Record<RoomKind, Op[]> = {
     { op: "add", type: "tvUnit" },
     { op: "add", type: "rug" },
     { op: "add", type: "plant" },
+    { op: "add", type: "ceilingFan" },
+    { op: "add", type: "ac" },
   ],
   kids: [
     { op: "add", type: "bed", variant: "storage" },
@@ -22,6 +25,8 @@ const LAYOUTS: Record<RoomKind, Op[]> = {
     { op: "add", type: "wardrobe" },
     { op: "add", type: "desk" },
     { op: "add", type: "rug", variant: "round" },
+    { op: "add", type: "ceilingFan" },
+    { op: "add", type: "ac" },
   ],
   living: [
     { op: "add", type: "sofa" },
@@ -33,6 +38,8 @@ const LAYOUTS: Record<RoomKind, Op[]> = {
     { op: "add", type: "floorLamp" },
     { op: "add", type: "plant" },
     { op: "add", type: "artwork", variant: "triptych" },
+    { op: "add", type: "ceilingFan" },
+    { op: "add", type: "ac" },
   ],
   dining: [
     { op: "add", type: "diningSet" },
@@ -55,6 +62,8 @@ const LAYOUTS: Record<RoomKind, Op[]> = {
     { op: "add", type: "armchair" },
     { op: "add", type: "rug" },
     { op: "add", type: "plant" },
+    { op: "add", type: "ceilingFan" },
+    { op: "add", type: "ac" },
   ],
   other: [
     { op: "add", type: "sofa" },
@@ -95,8 +104,8 @@ export function blankRoom(kind: RoomKind, width: number, depth: number, name?: s
     style: "modern-warm",
     scaleSource: "manual",
     openings: [
-      { id: "d1", kind: "door", wall: "bottom", offset: Math.min(width - 0.6, Math.max(0.6, width * 0.8)), width: 0.9, height: 2.1, sill: 0, main: true },
-      { id: "w1", kind: "window", wall: "top", offset: width / 2, width: Math.min(1.8, width - 0.8), height: 1.35, sill: 0.9 },
+      { id: "d1", kind: "door", wall: "bottom", offset: round2(Math.min(width - 0.6, Math.max(0.6, width * 0.8))), width: 0.9, height: 2.1, sill: 0, main: true },
+      { id: "w1", kind: "window", wall: "top", offset: round2(width / 2), width: round2(Math.min(1.8, width - 0.8)), height: 1.35, sill: 0.9 },
     ],
     items: [],
   };

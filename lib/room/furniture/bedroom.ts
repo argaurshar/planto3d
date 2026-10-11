@@ -93,22 +93,20 @@ export function bed(c: BuildCtx, it: Item, g: Group): void {
   k.rbox(g, mattW + 0.12, 0.03, 0.5, 0.012, accent, 0, mattressTop + 0.055, mz + mattD / 2 - 0.32);
   k.rbox(g, mattW + 0.13, 0.25, 0.02, 0.01, accent, 0, mattressTop - 0.08, mz + mattD / 2 - 0.32 + 0.24);
 
-  const pillowZ = back + 0.08 + 0.26;
+  // Dressed like a styled bed: sleeping pillows leaning on the headboard, a
+  // square cushion in front of each, a lumbar cushion in the middle.
+  const lean = -0.36; // top tilted back towards the headboard
   const pairs = mattW > 1.3 ? [-1, 1] : [0];
+  const pw = pairs.length === 2 ? Math.min(0.7, mattW / 2 - 0.05) : Math.min(0.7, mattW - 0.14);
   for (const s of pairs) {
-    const px = s * (mattW / 4);
-    const pw = pairs.length === 2 ? Math.min(0.68, mattW / 2 - 0.06) : Math.min(0.68, mattW - 0.15);
-    const pl = k.rbox(g, pw, 0.15, 0.42, 0.07, bedding, px, mattressTop + 0.12, pillowZ);
-    pl.rotation.x = -0.45;
-    const sham = k.rbox(g, pw * 0.92, 0.42, 0.12, 0.06, m.fabric(p.fabric), px, mattressTop + 0.22, pillowZ - 0.12);
-    sham.rotation.x = -0.18;
-    const c1 = k.rbox(g, 0.42, 0.38, 0.13, 0.07, s <= 0 ? accent : accent2, px + s * 0.05, mattressTop + 0.2, pillowZ + 0.12);
-    c1.rotation.x = -0.25;
+    const px = s * (pairs.length === 2 ? pw / 2 + 0.02 : 0);
+    const sp = k.pillow(g, pw, 0.48, 0.18, bedding, px, mattressTop + 0.22, back + 0.3);
+    sp.rotation.x = lean;
+    const cu = k.pillow(g, 0.46, 0.46, 0.16, s <= 0 ? accent : accent2, px + s * 0.04, mattressTop + 0.21, back + 0.45);
+    cu.rotation.set(lean * 0.75, 0, s * 0.04);
   }
-  if (pairs.length === 2) {
-    const lumbar = k.rbox(g, 0.55, 0.26, 0.12, 0.06, accent2, 0, mattressTop + 0.15, pillowZ + 0.2);
-    lumbar.rotation.x = -0.2;
-  }
+  const lumbar = k.pillow(g, Math.min(0.56, mattW * 0.4), 0.3, 0.15, pairs.length === 2 ? m.fabric(p.fabric) : accent2, 0, mattressTop + 0.15, back + 0.58);
+  lumbar.rotation.x = -0.22;
 }
 
 /** The decorative panel on the wall behind the bed ("bed back"). Local: w along the wall, d thickness. */

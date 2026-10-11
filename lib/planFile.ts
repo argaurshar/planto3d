@@ -96,3 +96,44 @@ export async function cropPlan(plan: PlanImage, rect: { x: number; y: number; w:
   ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h, 0, 0, c.width, c.height);
   return { ...toDataUrl(c, c.width, c.height), name: plan.name };
 }
+
+const PLAN_KEY = "planto3d_plan_v1";
+/** The stored copy only backs the plan check view, so it can be smaller. */
+const STORED_SIDE = 1600;
+
+/**
+ * Keep the plan image in this browser next to the autosaved room, so the plan
+ * check view still works after a reload. `width`/`height` stay the size the
+ * room was fitted on, whatever resolution is stored. Best effort: a full
+ * storage just means no plan after a reload.
+ */
+export async function savePlanImage(ref: string, plan: PlanImage): Promise<void> {
+  try {
+    const img = await loadImage(plan.src);
+    const k = Math.min(1, STORED_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(img.naturalWidth * k));
+    c.height = Math.max(1, Math.round(img.naturalHeight * k));
+    const ctx = c.getContext("2d")!;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    const stored = { ref, src: c.toDataURL("image/jpeg", 0.85), width: plan.width, height: plan.height, name: plan.name };
+    window.localStorage.setItem(PLAN_KEY, JSON.stringify(stored));
+  } catch {
+    /* storage full or blocked: the plan check works until the page is closed */
+  }
+}
+
+/** The stored plan image for a room's plan fit, if this browser still has it. */
+export function loadPlanImage(ref: string): PlanImage | null {
+  try {
+    const raw = window.localStorage.getItem(PLAN_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as Partial<PlanImage> & { ref?: string };
+    if (p.ref !== ref || typeof p.src !== "string" || !p.src.startsWith("data:image/") || !p.width || !p.height) return null;
+    return { src: p.src, width: p.width, height: p.height, name: p.name ?? "plan" };
+  } catch {
+    return null;
+  }
+}

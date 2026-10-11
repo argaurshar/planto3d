@@ -11,7 +11,7 @@
 import type { Dir, Item, ItemType, Opening, OpeningKind, RoomKind, RoomModel, Wall } from "./types";
 import { CATALOG, kindFromWords, normalize, typeFromWords } from "./catalog";
 import { STYLES } from "./styles";
-import { clamp, dirOfWall, opposite, round2, wallOfDir, type Rect } from "./geometry";
+import { ceilingAt, clamp, dirOfWall, opposite, round2, wallOfDir, type Rect } from "./geometry";
 import { variantFrom } from "./commands";
 import { WALL_CLEAR } from "./constants";
 import { settle } from "./place";
@@ -106,7 +106,7 @@ function nearest(r: Rect, W: number, D: number, exclude?: Wall): { wall: Wall; g
 export function readingToRoom(
   reading: PlanReading,
   image: { width: number; height: number },
-  hint: { kind?: RoomKind; name?: string } = {},
+  hint: { kind?: RoomKind; name?: string; planRef?: string } = {},
 ): ReadResult {
   const warnings: string[] = [];
   const IW = image.width;
@@ -202,7 +202,9 @@ export function readingToRoom(
     const wall = (Object.keys(dist) as Wall[]).sort((a, b2) => edge[a] + dist[a] * 0.25 - (edge[b2] + dist[b2] * 0.25))[0];
     const horizontal = wall === "top" || wall === "bottom";
     const k0 = String(o.kind ?? "door").toLowerCase();
-    const kind: OpeningKind = /slid|balcony|french/.test(k0) ? "sliding" : /window|ventilator/.test(k0) ? "window" : /open|arch|passage/.test(k0) ? "opening" : "door";
+    // A "slider window" is a window; only a sliding DOOR (or balcony / french door) is full height.
+    const kind: OpeningKind =
+      /window|ventilator/.test(k0) && !/door/.test(k0) ? "window" : /slid|balcony|french/.test(k0) ? "sliding" : /open|arch|passage/.test(k0) ? "opening" : "door";
     const L = horizontal ? W : D;
     let width = horizontal ? r.x1 - r.x0 : r.z1 - r.z0;
     width = kind === "door" ? clamp(width, 0.7, 1.5) : kind === "window" ? clamp(width, 0.45, Math.min(4, L - 0.2)) : clamp(width, 0.8, Math.min(4.5, L - 0.2));
@@ -254,6 +256,7 @@ export function readingToRoom(
     const near = nearest(r, W, D);
     if (t === "bed" && head) facing = opposite(dirOfWall(head));
     else if (front) facing = dirOfWall(front);
+    else if (cat.ceilingMounted) facing = "down";
     else if (cat.wallMounted || cat.againstWall) facing = opposite(dirOfWall(near.wall));
     else if (t === "armchair" || t === "chair") {
       // Turn loose seats towards the middle of the room.
@@ -273,6 +276,8 @@ export function readingToRoom(
       w = clamp(sideways ? ez : ex, 0.2, 4);
       d = clamp(sideways ? ex : ez, 0.2, 4);
     }
+    // A fan symbol is its sweep circle.
+    if (cat.ceilingMounted) w = d = clamp(Math.max(ex, ez), cat.range.w[0], cat.range.w[1]);
     let x = (r.x0 + r.x1) / 2;
     let z = (r.z0 + r.z1) / 2;
     // Back flush to its wall when it is meant to stand against one.
@@ -328,7 +333,10 @@ export function readingToRoom(
     openings: uniq,
     items,
     scaleSource,
+    plan: { ref: hint.planRef ?? "plan", imageW: IW, imageH: IH, box: [room.x0, room.z0, room.x1, room.z1].map((v) => Math.round(v * 10) / 10) as [number, number, number, number] },
   };
+  // A split AC hangs with its top 15 cm under the ceiling.
+  roomModel.items = roomModel.items.map((it) => (it.type === "ac" && it.elevation === undefined ? { ...it, elevation: round2(Math.max(1.9, ceilingAt(roomModel, it.x, it.z) - 0.15 - it.h)) } : it));
   const settled = settle(roomModel);
   if (!uniq.some((o) => o.kind !== "window")) warnings.push("No door was found on the plan — the entry view is taken from the bottom wall. Add the door in Room settings.");
   return { room: settled, warnings };

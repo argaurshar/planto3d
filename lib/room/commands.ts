@@ -7,12 +7,14 @@
 // understand) returns the SAME operations as JSON, so nothing — local or AI —
 // ever edits the room except through `applyOps`, which validates and places.
 
-import type { Dir, FloorFinish, Item, ItemType, RoomKind, RoomModel, StyleId, Wall } from "./types";
+import type { Dir, FloorFinish, Item, ItemType, Mood, RoomKind, RoomModel, StyleId, Wall } from "./types";
 import { CATALOG, ITEM_TYPES, itemLabel, normalize, typeFromWords, ROOM_KINDS } from "./catalog";
 import { COLOR_WORDS, STYLES, STYLE_IDS } from "./styles";
 import { clamp, dirVec, footprint, mainItem, opposite, round2, wallOfDir } from "./geometry";
 import { againstWallAt, clampInside, dirFromVec, fitOnWall, newId, placeNew, settle, wallLen } from "./place";
 import { WALL_CLEAR } from "./constants";
+import { nearestWallAt, resizeRoom } from "./planFit";
+import { MOOD_SPECS, MOODS, moodFromWords } from "./moods";
 
 // ---------------------------------------------------------------- operations
 
@@ -69,6 +71,7 @@ export type Op =
       depth?: number;
       name?: string;
       kind?: RoomKind;
+      mood?: Mood;
     }
   | { op: "shot"; shot: string };
 
@@ -152,19 +155,22 @@ export function applyOps(room0: RoomModel, ops: Op[]): ApplyResult {
           r.style = op.style;
           notes.push(`${STYLES[op.style].label} style`);
         }
+        if (op.mood && MOODS.includes(op.mood)) {
+          if (op.mood === "day") delete r.mood;
+          else r.mood = op.mood;
+          notes.push(`${MOOD_SPECS[op.mood].label.toLowerCase()} lighting`);
+        }
         const w = num(op.width, 1.2, 20);
         const d = num(op.depth, 1.2, 20);
+        let sized = r;
         if (w || d) {
-          r.width = round2(w ?? r.width);
-          r.depth = round2(d ?? r.depth);
-          r.items = r.items.map((it) => clampInside(r, it));
-          r.openings = r.openings.map((o) => ({ ...o, offset: clamp(o.offset, o.width / 2, wallLen(r, o.wall) - o.width / 2) }));
-          notes.push(`room resized to ${r.width.toFixed(2)} × ${r.depth.toFixed(2)} m`);
+          sized = resizeRoom(r, w ?? r.width, d ?? r.depth);
+          notes.push(`room resized to ${sized.width.toFixed(2)} × ${sized.depth.toFixed(2)} m${r.plan ? ", everything kept in its place on the plan" : ""}`);
         }
-        if (op.name) r.name = String(op.name).slice(0, 60);
-        if (op.kind && ROOM_KINDS.some((k) => k.value === op.kind)) r.kind = op.kind;
+        if (op.name) sized.name = String(op.name).slice(0, 60);
+        if (op.kind && ROOM_KINDS.some((k) => k.value === op.kind)) sized.kind = op.kind;
         if (notes.length) {
-          room = r;
+          room = sized;
           changed = true;
           messages.push(cap(notes.join(", ")) + ".");
         }
@@ -325,7 +331,15 @@ export function applyOps(room0: RoomModel, ops: Op[]): ApplyResult {
           if (z !== undefined) it.z = z;
           if (op.dx) it.x += clamp(op.dx, -20, 20);
           if (op.dz) it.z += clamp(op.dz, -20, 20);
-          if (x !== undefined || z !== undefined || op.dx || op.dz) notes.add("moved");
+          if (x !== undefined || z !== undefined || op.dx || op.dz) {
+            notes.add("moved");
+            // A wall-hung piece slides along the walls: it lands on the wall nearest where it was dropped.
+            if (CATALOG[it.type].wallMounted) {
+              const { wall, offset } = nearestWallAt(room, it.x, it.z);
+              const c = againstWallAt(room, wall, clamp(offset, it.w / 2, wallLen(room, wall) - it.w / 2), it.d, 0);
+              it = { ...it, x: round2(c.x), z: round2(c.z), facing: c.facing };
+            }
+          }
           it = clampInside(room, it);
           room = { ...room, items: room.items.map((i) => (i.id === it.id ? it : i)) };
         }
@@ -390,6 +404,8 @@ const VERB = {
 /** Words that start a new instruction; a clause without one continues the previous verb. */
 const ACTION = /\b(add|put|place|insert|include|install|remove|delete|erase|take out|get rid of|move|shift|push|slide|rotate|turn|spin|flip|change|replace|swap|switch|make|convert|use|update|redesign|restyle|paint|set|show|take|want|need|give me|resize|increase|decrease|reduce)\b|^(no|without)\b/;
 
+const MOOD_WORDS = /\b(night|nighttime|midnight|evening|dusk|sunset|golden hour|twilight|day|daylight|daytime|morning|noon|afternoon|sunny|sunlight)\b/g;
+
 const SHOT_WORDS = /\b(shot|view|camera|angle|perspective|picture|photo|render from|look from|see from|show)\b/;
 
 const STOP = new Set(["the", "a", "an", "of", "to", "with", "and", "in", "on", "for", "it", "its", "this", "that", "please", "unit", "table", "wood", "front", "top", "set", "shelf", "chair", "bed", "sofa"]);
@@ -428,13 +444,19 @@ function parseLength(text: string): number | null {
   return v;
 }
 
-/** "12 x 14 ft", "3.6 by 4.2 m" → [a, b] in metres. */
+/** "12 x 14 ft", "3.6 by 4.2 m", "3600 x 4200 mm", "11'8\" x 20'" → [a, b] in metres. */
 function parsePair(text: string): [number, number] | null {
-  const m = text.match(/(\d+(?:\.\d+)?)\s*(?:'|ft|feet|m)?\s*(?:x|×|by|into|\*)\s*(\d+(?:\.\d+)?)\s*(mm|cm|m|meters?|metres?|ft|feet|foot|'|")?/);
+  // Feet and inches (11'8", 11 ft 8 in) become decimal feet first.
+  const t = text
+    .replace(/[’′]/g, "'")
+    .replace(/[”″]/g, '"')
+    .replace(/(\d+(?:\.\d+)?)\s*(?:'|ft|feet|foot)\s*-?\s*(\d+(?:\.\d+)?)\s*(?:"|''|in\b|inch(?:es)?\b)/g, (_, f: string, i: string) => `${(parseFloat(f) + parseFloat(i) / 12).toFixed(4)}ft`);
+  const U = `mm|cm|m|meters?|metres?|ft|feet|foot|'|"`;
+  const m = t.match(new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(${U})?\\s*(?:x|×|by|into|\\*)\\s*(\\d+(?:\\.\\d+)?)\\s*(${U})?`));
   if (!m) return null;
-  const u = m[3] ?? (parseFloat(m[1]) > 8 ? "ft" : "m");
+  const u = m[4] ?? m[2] ?? (parseFloat(m[1]) > 8 ? "ft" : "m");
   const k = u === "mm" ? 0.001 : u === "cm" ? 0.01 : /^(ft|feet|foot|')$/.test(u) ? 0.3048 : u === '"' ? 0.0254 : 1;
-  return [parseFloat(m[1]) * k, parseFloat(m[2]) * k];
+  return [parseFloat(m[1]) * k, parseFloat(m[3]) * k];
 }
 
 function wallFrom(text: string): Wall | null {
@@ -561,6 +583,17 @@ export function parseCommand(room: RoomModel, text: string, ctx: CommandContext)
     if (VERB.move.test(clause) && !/\bpanel\b/.test(clause)) clause = clause.replace(/\bbed back\b/, "bed backward");
     const has = (re: RegExp) => re.test(clause);
     const type = typeIn(room, clause);
+
+    // Lighting mood: "evening light", "make it night", "night view from the bed back".
+    // ("night stand" names a piece; "night view from the bed back" is a mood and a shot.)
+    const mood = !has(VERB.add) && !has(VERB.remove) && (!type || has(SHOT_WORDS)) ? moodFromWords(clause) : null;
+    if (mood) {
+      ops.push({ op: "room", mood });
+      const rest = clause.replace(MOOD_WORDS, " ");
+      const s = has(SHOT_WORDS) ? shotFrom(rest) : null;
+      if (s) ops.push({ op: "shot", shot: s });
+      continue;
+    }
 
     // Camera: "show the bed back view", "take a shot from the door", "next shot".
     if (has(SHOT_WORDS) && !has(VERB.add) && !has(VERB.remove)) {
@@ -863,6 +896,7 @@ export function sanitizeOps(room: RoomModel, raw: unknown): Op[] {
           style: STYLE_IDS.includes(o.style as StyleId) ? (o.style as StyleId) : undefined,
           width: n(o.width),
           depth: n(o.depth),
+          mood: MOODS.includes(o.mood as Mood) ? (o.mood as Mood) : undefined,
         });
         break;
       case "shot":

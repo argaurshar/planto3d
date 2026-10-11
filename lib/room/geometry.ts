@@ -1,8 +1,9 @@
 // Plan geometry over a RoomModel: footprints, which wall a piece backs onto,
 // the main door, the room's main piece. Pure functions, no three.js.
 
-import type { Dir, Item, Opening, RoomModel, Wall } from "./types";
+import type { Dir, Item, ItemType, Opening, RoomModel, Wall } from "./types";
 import { CATALOG, MAIN_ITEM_ORDER } from "./catalog";
+import { FALSE_CEILING_DROP } from "./constants";
 
 export interface Rect {
   x0: number;
@@ -101,16 +102,52 @@ export function mainItem(room: RoomModel): Item | null {
     const found = room.items.filter((i) => i.type === type).sort((a, b) => b.w * b.d - a.w * a.d);
     if (found.length) return found[0];
   }
-  return [...room.items].filter((i) => !CATALOG[i.type].flat && !CATALOG[i.type].wallMounted).sort((a, b) => b.w * b.d - a.w * a.d)[0] ?? null;
+  return [...room.items].filter((i) => onFloor(i.type)).sort((a, b) => b.w * b.d - a.w * a.d)[0] ?? null;
 }
 
 /** Items hung on (or standing flush against) a wall: hidden with that wall in clip shots. */
 export function itemsAgainst(room: RoomModel, wall: Wall, tol = 0.12, onlyWallMounted = false): Item[] {
   return room.items.filter((it) => {
     if (onlyWallMounted && !CATALOG[it.type].wallMounted) return false;
-    if (CATALOG[it.type].flat) return false;
+    if (CATALOG[it.type].flat || CATALOG[it.type].ceilingMounted) return false;
     return wallBehind(room, it, tol) === wall;
   });
+}
+
+/** A piece that stands on the floor: not a rug, not hung on a wall or from the ceiling. */
+export function onFloor(type: ItemType): boolean {
+  const c = CATALOG[type];
+  return !c.flat && !c.wallMounted && !c.ceilingMounted;
+}
+
+/** Width of the false ceiling's perimeter band; inside it the true ceiling is open. */
+export function falseCeilingBand(room: Pick<RoomModel, "width" | "depth">): number {
+  return Math.min(0.65, Math.min(room.width, room.depth) * 0.18);
+}
+
+/** Height of the ceiling surface over a plan point (the false ceiling band, or the true ceiling). */
+export function ceilingAt(room: RoomModel, x: number, z: number): number {
+  if (!room.falseCeiling) return room.height;
+  const b = falseCeilingBand(room);
+  return x < b || z < b || x > room.width - b || z > room.depth - b ? room.height - FALSE_CEILING_DROP : room.height;
+}
+
+/** Lowest clear height under a ceiling fan's blades (2.1 m is the legal minimum; 2.3 m feels right). */
+export const FAN_CLEAR = 2.3;
+
+/** How far a ceiling piece hangs down: its drop, shortened so a fan's blades stay above head height. */
+export function ceilingDrop(room: RoomModel, it: Item): number {
+  return clamp(it.h, 0.2, Math.max(0.2, ceilingAt(room, it.x, it.z) - FAN_CLEAR));
+}
+
+/** Bottom and top of a piece above the floor. */
+export function verticalSpan(room: RoomModel, it: Item): [number, number] {
+  if (CATALOG[it.type].ceilingMounted) {
+    const c = ceilingAt(room, it.x, it.z);
+    return [c - ceilingDrop(room, it), c];
+  }
+  const y0 = it.elevation ?? 0;
+  return [y0, y0 + it.h];
 }
 
 export function rectsOverlap(a: Rect, b: Rect, pad = 0): boolean {

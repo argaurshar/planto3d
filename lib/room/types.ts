@@ -28,6 +28,9 @@ export type RoomKind =
 
 export type FloorFinish = "wood" | "tile" | "marble" | "carpet";
 
+/** Time of day the room is lit for: daylight, golden-hour evening, or night with only its own lights. */
+export type Mood = "day" | "evening" | "night";
+
 export type StyleId = "modern-warm" | "scandinavian" | "luxury" | "minimal" | "indian-contemporary";
 
 export type ItemType =
@@ -59,6 +62,8 @@ export type ItemType =
   | "shower"
   | "bathtub"
   | "bench"
+  | "ceilingFan"
+  | "ac"
   | "other";
 
 /**
@@ -82,7 +87,7 @@ export interface Item {
   facing: Dir;
   /** Free label shown to the user (e.g. "study chair"); defaults to the catalog label. */
   label?: string;
-  /** Height above the floor of the item's bottom (wall-hung units, artwork). */
+  /** Height above the floor of the item's bottom (wall-hung units, artwork, a split AC). */
   elevation?: number;
 }
 
@@ -128,6 +133,24 @@ export interface RoomModel {
   items: Item[];
   /** Where the room's numbers came from, for the UI's honesty line. */
   scaleSource?: "printed" | "estimated" | "manual";
+  /** Where the room sits on the uploaded plan, for the plan check view. */
+  plan?: PlanFit;
+  /** Lighting mood; absent means day. */
+  mood?: Mood;
+}
+
+/**
+ * The room's interior rectangle on the plan image it was read from. The image
+ * itself is kept outside the model (it is large); `ref` ties the two together.
+ * The box maps the whole room, so the overlay stays aligned after a resize.
+ */
+export interface PlanFit {
+  ref: string;
+  /** Pixel size of the plan image the box is measured on. */
+  imageW: number;
+  imageH: number;
+  /** Inner faces of the walls in image pixels: [left, top, right, bottom]. */
+  box: [number, number, number, number];
 }
 
 /** A camera position the room is shot from. */

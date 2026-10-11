@@ -8,7 +8,7 @@
 
 import type { Item, RoomModel, Shot, Wall } from "./types";
 import { CATALOG, itemLabel } from "./catalog";
-import { clamp, dirVec, footprint, itemsAgainst, mainDoor, mainItem, opposite, wallBehind, wallOfDir } from "./geometry";
+import { clamp, dirVec, footprint, itemsAgainst, mainDoor, mainItem, opposite, verticalSpan, wallBehind, wallOfDir } from "./geometry";
 import { openingCentre } from "./shell";
 
 export const EYE = 1.55;
@@ -66,7 +66,7 @@ function standable(room: RoomModel, x: number, z: number, tallClearance = 0.2): 
   if (x < 0.25 || z < 0.25 || x > room.width - 0.25 || z > room.depth - 0.25) return false;
   return room.items.every((it) => {
     const cat = CATALOG[it.type];
-    if (cat.flat || (cat.wallMounted && (it.elevation ?? 0) > 1.0)) return true;
+    if (cat.flat || cat.ceilingMounted || (cat.wallMounted && (it.elevation ?? 0) > 1.0)) return true;
     const d = distToItem(it, x, z);
     return d >= (it.h >= 1.0 ? tallClearance : 0.15);
   });
@@ -194,7 +194,8 @@ function topShot(room: RoomModel): Shot {
     target: [room.width / 2, 0, room.depth / 2],
     fov: 30,
     shiftY: 0,
-    hide: ["ceiling", "curtains", "exterior"],
+    // Ceiling fans hang between the camera and the floor plan.
+    hide: ["ceiling", "curtains", "exterior", ...room.items.filter((i) => CATALOG[i.type].ceilingMounted).map((i) => `item:${i.id}`)],
     note: "The model seen from above, ceiling removed — check it against your plan.",
   };
 }
@@ -255,11 +256,11 @@ export function itemsInView(room: RoomModel, shot: Shot, aspect = 4 / 3): Item[]
   return room.items.filter((it) => {
     if (hidden.has(`item:${it.id}`)) return false;
     const r = footprint(it);
-    const y0 = it.elevation ?? 0;
+    const [y0, y1] = verticalSpan(room, it);
     for (let a = 0; a <= 4; a++)
       for (let b = 0; b <= 4; b++)
         for (let c = 0; c <= 2; c++) {
-          if (sees(r.x0 + ((r.x1 - r.x0) * a) / 4, y0 + (it.h * c) / 2, r.z0 + ((r.z1 - r.z0) * b) / 4)) return true;
+          if (sees(r.x0 + ((r.x1 - r.x0) * a) / 4, y0 + ((y1 - y0) * c) / 2, r.z0 + ((r.z1 - r.z0) * b) / 4)) return true;
         }
     return false;
   });
