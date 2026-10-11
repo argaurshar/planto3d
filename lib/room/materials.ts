@@ -479,11 +479,14 @@ export class Materials {
   wood(species: WoodSpecies = this.palette.wood, gloss = false): Mat {
     return this.memo(`wood:${species}:${gloss}`, () => {
       const c = this.canvasFor(`wood:${species}`, () => paintWood(species));
-      return new this.THREE.MeshStandardMaterial({
+      // Veneer under a thin satin lacquer: the grain stays matte, the finish gives soft reflections.
+      return new this.THREE.MeshPhysicalMaterial({
         map: this.tex(c, 0.6),
         bumpMap: this.tex(c, 0.6, false),
         bumpScale: 0.6,
         roughness: gloss ? 0.32 : 0.58,
+        clearcoat: gloss ? 0.6 : 0.3,
+        clearcoatRoughness: gloss ? 0.15 : 0.4,
       });
     });
   }
@@ -502,12 +505,16 @@ export class Materials {
           sheenColor: new this.THREE.Color(color).lerp(new this.THREE.Color("#ffffff"), 0.35),
         });
       }
-      return new this.THREE.MeshStandardMaterial({
+      // Cloth catches light at grazing angles (sheen); without it fabric reads as matte plastic.
+      return new this.THREE.MeshPhysicalMaterial({
         color,
         map: this.tex(c, span),
         bumpMap: this.tex(c, span, false),
         bumpScale: kind === "boucle" ? 2.5 : 1.2,
         roughness: 0.95,
+        sheen: kind === "boucle" ? 0.45 : 0.3,
+        sheenRoughness: 0.8,
+        sheenColor: new this.THREE.Color(color).lerp(new this.THREE.Color("#ffffff"), 0.2),
       });
     });
   }

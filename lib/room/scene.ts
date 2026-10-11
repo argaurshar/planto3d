@@ -44,6 +44,8 @@ export function buildRoomScene(T: ThreeBundle, room: RoomModel, opts: SceneOptio
   const ctx: BuildCtx = { k, m: materials, p: materials.palette, style: room.style, room, ceilingClear };
 
   buildShell(ctx, root);
+  // Furniture gets eased edges (walls, frames and glass stay crisp).
+  k.bevel = 0.004;
   const items = new Map<string, Group>();
   for (const it of room.items) {
     try {
@@ -55,6 +57,7 @@ export function buildRoomScene(T: ThreeBundle, room: RoomModel, opts: SceneOptio
       if (typeof console !== "undefined") console.warn("[voxa] could not build", it.type, it.id, e);
     }
   }
+  k.bevel = 0;
   if (opts.lights !== false) buildDaylight(ctx, root);
   else {
     // Strip lights the furniture added (lamps), the export makes its own.
