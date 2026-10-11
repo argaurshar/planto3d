@@ -126,14 +126,21 @@ walls.
   `minimal`, `indian-contemporary`), plus colour and wood words.
 - `materials.ts` paints procedural canvas textures (wood, planks, marble,
   tiles, fabric, cane, rugs, art, exterior) and supplies a `Materials` cache
-  with a clay mode. The view outside (`exterior`) is painted per mood (bright
+  with a clay mode. Fabric has a soft sheen (cloth catches grazing light) and
+  wood a thin satin clearcoat; both export to Blender as glTF extensions. The
+  view outside (`exterior`) is painted per mood (bright
   sky, sunset, or a dark night with lit windows across the street), and
   glowing surfaces scale with the mood's `glow`. Fabric is a fine, even weave; large-scale mottling read as
   stains. TV screens are satin rather than mirror-glossy, so lamps don't show
   as hot spots. `resolveFinish` reads finish words such as "walnut",
   "emerald velvet", "white marble" or "#aabbcc".
 - `kit.ts`: `loadThree()`, `Kit` (box/rbox/cyl… helpers) and `worldUV` (UVs in
-  world metres). `Kit.lamp` point lights scale with `Kit.lampScale` (the
+  world metres). `Kit.bevel` eases box edges (4 mm, furniture only: the scene
+  turns it on after the shell), so edges catch light like real furniture.
+  `Kit.drape` makes cloth: it lies on a top with a loft, rolls over chosen
+  edges and hangs with irregular folds that deepen towards the hem; the bed's
+  duvet, its turned-down fold and the throw are drapes, wider than the bed
+  base so they hang over it. `Kit.lamp` point lights scale with `Kit.lampScale` (the
   mood's lamp strength). `Kit.pillow` makes a real pillow shape: puffy in the middle,
   pinched to a seam, with the sides drawn in. Beds are dressed with sleeping
   pillows leaning on the headboard, a square cushion in front of each, and a
@@ -312,8 +319,20 @@ walls.
     or guess numbers and never invent furniture.
   - `COMMAND_SYSTEM` + `commandUser` describe the Op schema, the catalog and
     the room JSON.
-  - `realisticPrompt` keeps the camera, geometry and every piece exactly, and
-    changes only materials and light.
+  - `realisticPrompt` keeps the LAYOUT exactly (camera, room, which pieces,
+    where, how big, which design and colour) and has every SURFACE and all the
+    LIGHT re-rendered as a real photograph. An earlier version said "keep the
+    render exactly", so Nano Banana copied the plastic CG look too.
+    - It opens by naming the input as a real-time 3D screenshot that looks CG
+      (plastic, smooth fabric, sharp edges, flat light), then lists what stays
+      (KEEP EXACTLY, COLOURS STAY) and what must become real (MAKE IT REAL).
+    - Each piece in frame gets its real material (`realMaterial`): duvet with
+      creases and drape, fabric with weave, wood veneer with grain and satin
+      sheen, eased edges. Upholstery also gets its colour word
+      (`colourName`, nearest `COLOR_WORDS` entry), which stops colour drift.
+    - Light is physically based global illumination plus the mood's words,
+      and the camera is a full-frame 24 mm tilt-shift at f/8. The style line
+      is for material character only; colours come from the image.
     - It names only the pieces in frame (`itemsInView`). Naming an
       out-of-frame piece made Nano Banana paint it in: a real plan's entry
       shot gained the wardrobe that stands behind the camera.

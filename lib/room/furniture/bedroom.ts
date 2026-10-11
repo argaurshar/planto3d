@@ -86,12 +86,19 @@ export function bed(c: BuildCtx, it: Item, g: Group): void {
   // Mattress, duvet, pillows, throw — the same on every frame.
   const mz = back + 0.08 + mattD / 2;
   k.rbox(g, mattW, 0.22, mattD, 0.05, bedding, 0, mattressTop - 0.11, mz);
-  const duvetD = mattD * 0.7;
-  const duvetZ = mz + mattD / 2 - duvetD / 2 + 0.03;
-  k.rbox(g, mattW + 0.06, 0.26, duvetD, 0.06, bedding, 0, mattressTop - 0.08, duvetZ);
-  k.rbox(g, mattW + 0.07, 0.07, 0.24, 0.035, bedding, 0, mattressTop + 0.06, duvetZ - duvetD / 2 + 0.12);
-  k.rbox(g, mattW + 0.12, 0.03, 0.5, 0.012, accent, 0, mattressTop + 0.055, mz + mattD / 2 - 0.32);
-  k.rbox(g, mattW + 0.13, 0.25, 0.02, 0.01, accent, 0, mattressTop - 0.08, mz + mattD / 2 - 0.32 + 0.24);
+  // A real duvet: lies on the mattress, rolls over the sides and the foot and
+  // hangs down over the mattress with folds; its head end is turned down.
+  // It is a little wider and longer than the bed base, so it hangs over the
+  // base's edge instead of into it.
+  const head = mz - mattD / 2 + mattD * 0.28;
+  const foot = d / 2 + 0.015;
+  const duvetD = foot - head;
+  const duvetZ = (foot + head) / 2;
+  const top = mattressTop + 0.012;
+  k.drape(g, w + 0.03, duvetD, 0.3, bedding, 0, top, duvetZ, { r: 0.07, loft: 0.04, back: true, backDrop: 0.06, seed: `${it.id}:duvet` });
+  k.drape(g, w + 0.045, 0.3, 0.27, bedding, 0, top + 0.045, head + 0.15, { r: 0.05, loft: 0.04, creases: 0.8, front: false, back: true, backDrop: 0.05, seed: `${it.id}:fold` });
+  // The throw across the foot, hanging lower than the duvet on both sides.
+  k.drape(g, w + 0.06, 0.5, 0.36, accent, 0, top + 0.014, foot - 0.4, { r: 0.07, loft: 0.04, creases: 1.5, front: false, seed: `${it.id}:throw` });
 
   // Dressed like a styled bed: sleeping pillows leaning on the headboard, a
   // square cushion in front of each, a lumbar cushion in the middle.

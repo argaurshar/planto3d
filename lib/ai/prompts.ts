@@ -4,7 +4,7 @@
 //   3. optionally re-light a raw shot of the exact model into a photograph.
 // It never decides where anything is: the 3D model does.
 
-import type { RoomModel, Shot } from "../room/types";
+import type { Item, RoomModel, Shot } from "../room/types";
 import { CATALOG, ITEM_TYPES, itemLabel } from "../room/catalog";
 import { STYLES, STYLE_IDS, COLOR_WORDS } from "../room/styles";
 import { describeItem } from "../room/commands";
@@ -116,29 +116,115 @@ function floorWords(room: RoomModel): string {
   }
 }
 
+const WOOD_NAMES: Record<string, string> = { oak: "oak", walnut: "walnut", teak: "teak", "white-oak": "white oak", ash: "ash", wenge: "wenge" };
+
+/** What makes each floor read as real in a photograph. */
+const FLOOR_DETAIL: Record<RoomModel["floor"], string> = {
+  wood: "with real grain, plank seams and soft reflections of the window light",
+  tile: "with fine grout lines and a soft satin reflection of the window light",
+  marble: "with natural veining and glossy reflections of the windows and lights",
+  carpet: "with a soft, even pile",
+};
+
+/** The nearest plain colour word for a hex colour ("#d8c7a5" → "beige"), to anchor the AI. */
+function colourName(hex: string): string {
+  const rgb = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const [r, g, b] = rgb(hex);
+  let best = "";
+  let bestD = Infinity;
+  for (const [word, h] of Object.entries(COLOR_WORDS)) {
+    if (!/^#[0-9a-f]{6}$/i.test(h) || word === "gray") continue;
+    const [r2, g2, b2] = rgb(h);
+    // Weighted RGB distance: close enough to pick the word a person would use.
+    const d = 2 * (r - r2) ** 2 + 4 * (g - g2) ** 2 + 3 * (b - b2) ** 2;
+    if (d < bestD) [best, bestD] = [word, d];
+  }
+  return best;
+}
+
+/** What a piece is really made of, in the words a photographer would use. */
+function realMaterial(it: Item, room: RoomModel): string {
+  const p = STYLES[room.style];
+  const wood = WOOD_NAMES[p.wood] ?? "walnut";
+  const own = it.finish ? `${it.finish} ` : "";
+  // The fabric colour the builders use when no finish is set.
+  const cloth = it.finish ? "" : `${colourName(it.type === "armchair" ? p.accent : it.type === "ottoman" ? p.accent2 : p.fabric)} `;
+  switch (it.type) {
+    case "bed":
+      return `upholstered headboard in ${own}woven fabric with real stitched channels; mattress dressed in cotton with a thick, soft duvet that drapes over the sides with natural creases; plump pillows, slightly squashed and creased; the throw stays where it lies, in its colour, as woven fabric with soft folds`;
+    case "sofa":
+    case "armchair":
+    case "ottoman":
+    case "bench":
+      return `${own}${cloth}upholstery in exactly its colour from the image, with visible weave, softly rounded cushion edges and gentle seat creases${it.type === "sofa" ? "; its scatter cushions and throw stay exactly where they are, in their colours" : ""}`;
+    case "rug":
+      return "woven rug with real pile and texture";
+    case "mirror":
+      return "real mirror glass reflecting the room";
+    case "plant":
+      return "living plant with real leaves in a ceramic pot";
+    case "artwork":
+      return "framed art print behind glass";
+    case "ceilingFan":
+      return "ceiling fan with a powder-coated metal body and blades";
+    case "ac":
+      return "white matte plastic split AC unit";
+    case "floorLamp":
+      return "fabric lamp shade glowing softly, metal stand";
+    default:
+      break;
+  }
+  switch (CATALOG[it.type].role) {
+    case "wood":
+      return `${it.finish ? it.finish : `${wood} veneer`} with real grain and a satin sheen; edges very slightly rounded so they catch the light`;
+    case "lacquer":
+      return `${own}satin lacquer with soft reflections and slightly rounded edges`;
+    case "stone":
+      return `${own}polished stone with natural veining`;
+    case "metal":
+      return `${own}brushed metal`;
+    case "ceramic":
+      return "glazed white ceramic";
+    case "fabric":
+      return `${own}fabric with visible weave and soft folds`;
+    default:
+      return "real materials";
+  }
+}
+
 /**
- * Instruction for the realistic pass. The input image is a raw render of the
- * exact model; the model may change how things LOOK, never what or where they
- * are. Only the pieces the camera really sees are named: naming a piece that
- * is out of frame (or behind the camera) makes image models paint it in.
+ * Instruction for the realistic pass. The input image is a raw real-time
+ * render of the exact model, and it looks like CG: the AI must keep the
+ * LAYOUT exactly (camera, room, which pieces, where, how big, which design and
+ * colour) but re-render every SURFACE and all the LIGHT as a real photograph.
+ * Telling it to keep the render "exactly" made it copy the plastic look too.
+ * Only the pieces the camera really sees are named: naming a piece that is
+ * out of frame (or behind the camera) makes image models paint it in.
  */
 export function realisticPrompt(room: RoomModel, shot: Shot | null, extra = ""): string {
   const style = STYLES[room.style];
+  const words = ROOM_WORDS[room.kind];
   const visible = shot ? itemsInView(room, shot) : room.items;
-  const pieces = visible.map((i) => `${describeItem(i)}${i.finish ? `, ${i.finish}` : ""}`).join("; ");
+  const pieces = visible.map((i) => `- ${describeItem(i)}: ${realMaterial(i, room)}`).join("\n");
   const hasRug = visible.some((i) => i.type === "rug");
   return [
-    `Turn this 3D render into a real photograph of the same ${ROOM_WORDS[room.kind]}, taken by a professional interior photographer.`,
-    "It is a render of an exact, true-scale 3D model, so everything in it is already correct. Keep EXACTLY: the camera position, height, lens and framing; the walls, ceiling, floor and every door and window; every piece of furniture and decor — its position, size, shape, design, colour and pattern. Do not add, remove, move, resize or restyle anything.",
-    pieces ? `The furniture in the picture is exactly this, and nothing else: ${pieces}.` : "There is no furniture in the picture; keep it that way.",
-    "Wherever the render shows plain wall, plain floor or plain ceiling, it stays plain: no cabinets, wardrobes, shelves, doors, windows, art, mirrors, plants, lamps or rugs are added anywhere.",
-    `Floor: a ${floorWords(room)}, exactly as light or dark as in the render, same plank direction${hasRug ? "" : ", no rug"}; do not darken or recolour it. Walls: the same paint colour as the render (${room.wallColor}).`,
-    "Change only how it looks: real materials with true texture (wood grain, fabric weave, stone veining, paint), physically correct soft shadows, bounce light and ambient occlusion, accurate reflections, subtle real-life detail (fabric creases, slight imperfections). Sharp focus, natural colour, straight verticals, high dynamic range.",
-    `Light: ${moodSpec(room).words}`,
-    `Style: ${style.describe}.`,
-    extra.trim() ? `Also: ${extra.trim().slice(0, 300)}` : "",
-    "No people, no text, no watermark.",
-  ]
-    .filter(Boolean)
-    .join("\n");
+    `This image is a screenshot of a real-time 3D model of a ${words}, so it looks like CG: plastic surfaces, perfectly smooth fabric, razor-sharp edges, flat even light. Re-render it as a real photograph of the same ${words}, the kind a professional interior photographer takes for an architecture magazine, indistinguishable from a real photo.`,
+    "",
+    "KEEP EXACTLY (the layout is measured and correct): the camera position, height, lens, framing and perspective, with straight verticals; the walls, ceiling, false ceiling and downlights, doors and windows; every piece of furniture, which piece it is, where it stands, its size, design and colour. Do not add, remove, move or resize anything. Wherever the image shows plain wall, floor or ceiling, it stays plain: no new cabinets, shelves, art, mirrors, plants, lamps or rugs.",
+    "COLOURS STAY: every piece, cushion, throw, rug, the walls and the floor keep exactly the hue and lightness they have in the image. Only texture, detail and light become real.",
+    "",
+    pieces ? `The pieces in the picture are exactly these, and nothing else. Make each one out of real materials:\n${pieces}` : "There is no furniture in the picture; keep it that way.",
+    "",
+    "MAKE IT REAL (nothing may look like 3D any more):",
+    `- Floor: ${floorWords(room)} ${FLOOR_DETAIL[room.floor]}, the same tone as the image${hasRug ? "" : ", no rug"}.`,
+    `- Walls and ceiling: matte painted plaster in the same colour as the image (${room.wallColor}), with subtle surface texture; the light on them falls off naturally and darkens softly into the corners.`,
+    ...(room.curtains ? ["- Curtains: sheer voile with soft vertical folds and real translucency, glowing with the light from outside; heavier linen drapes at the sides."] : []),
+    "- Fabric everywhere has visible weave, softness and natural creases; wood has grain and a satin sheen; edges are crisp but very slightly rounded, never razor-sharp; metal is brushed; glass and the TV screen show faint real reflections; lamp shades glow softly.",
+    `- Light: ${moodSpec(room).words} Physically based global illumination: light bounces off the floor and walls with gentle colour bleed, soft contact shadows under and behind every piece, ambient occlusion where surfaces meet, natural falloff from every light.`,
+    "- Camera: full-frame camera with a 24 mm tilt-shift lens at f/8, true-to-life white balance, natural contrast and highlight roll-off, high dynamic range, crisp fine detail, a hint of photographic grain.",
+    "",
+    `Style, for the character of the materials only (the colours come from the image): ${style.describe}.`,
+    ...(extra.trim() ? [`Also: ${extra.trim().slice(0, 300)}`] : []),
+    "No people, no text, no watermark, no illustration or painterly look.",
+  ].join("\n");
 }

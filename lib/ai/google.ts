@@ -31,6 +31,7 @@ export function isGoogleKey(key: string): boolean {
 function friendly(status: number, msg: string): string {
   if (status === 400 && /api key/i.test(msg)) return "Google rejected the API key — check it in Google AI Studio.";
   if (status === 401 || status === 403) return "Google API key not allowed for this model (check the key and that the Gemini API is enabled).";
+  if (status === 429 && /spend(ing)? cap/i.test(msg)) return "Your Google AI project has reached its monthly spending cap. Raise the cap at ai.studio/spend (or use another key); waiting will not help.";
   if (status === 429) return "Google rate limit or quota reached — wait a moment, or check billing in Google AI Studio.";
   if (status === 404) return `Model not found at Google: ${msg}`;
   return msg || `Google API error (HTTP ${status}).`;
