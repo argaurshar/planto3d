@@ -27,8 +27,9 @@ drawing is cropped with a box). The app:
 4. Applies **edits by command**: "add bed back", "change the bed design",
    "change side table design", "make the sofa emerald velvet", "move the bed
    30 cm left", "delete that", "paint the walls sage", "remove false ceiling",
-   "add a ceiling fan", "add an AC", "evening light", "night view from the bed
-   back", "take shot from bed back"… plus panels for everything, undo and
+   "add a ceiling fan", "add an AC", "change ceiling design", "wooden slat
+   ceiling", "evening light", "night view from the bed back", "take shot from
+   bed back"… plus panels for everything, undo and
    redo.
 5. **Lighting moods**: day, evening (golden hour) or night (only the room's
    own lights), for the live view, every shot, Blender and the realistic
@@ -77,7 +78,7 @@ build 3D", or skip the AI and enter the size) → `studio`:
   has design (variant), finish chips and free text, W/D/H, x/z, facing,
   rotate, nudge and delete. It also adds elements and has "Furnish it for me".
 - `studio/RoomPanel.tsx` edits the name, kind, style, size, wall colour,
-  floor, false ceiling and curtains, plus doors and windows (kind, wall, centre
+  floor, false ceiling (and its design) and curtains, plus doors and windows (kind, wall, centre
   offset, width, sill, main door).
 - `studio/ShotGallery.tsx` shows the captured shots. Each has "🎬 Render in
   Blender" (Draft or Final, with progress), "Make realistic" with an optional
@@ -105,7 +106,8 @@ walls.
 - `types.ts`: `RoomModel`, `Item`, `Opening`, `Shot`, `Mood` and `PlanFit`
   (the room's interior box in plan-image pixels, `RoomModel.plan`, so undo
   restores it with the model). `RoomModel.mood` is the lighting mood; absent
-  means day.
+  means day. `RoomModel.ceilingDesign` (`CeilingDesign`: `cove` | `island` |
+  `slats`) is the false ceiling's design; absent means cove.
 - `moods.ts`: `MOOD_SPECS` is one spec per mood, read everywhere light is
   made:
   - three.js: the sun (high by day, low and orange in the evening, none at
@@ -153,10 +155,18 @@ walls.
   `furniture/index.ts` `buildItem` names each group `item:<id>`.
 - `shell.ts` builds the floor, walls of real thickness with openings cut in
   (frames, leaves, glass, sills, an exterior backdrop), skirting, curtains, the
-  ceiling and an optional false ceiling with cove and downlights (scaled by
-  the mood's lamp strength), plus `buildDaylight` (sky panels, sun and fill,
-  by mood). Groups are named so a shot can hide them: `wall:<side>`,
-  `door:<id>`, `ceiling`, `curtains`, `exterior`.
+  ceiling and an optional false ceiling (scaled by the mood's lamp strength)
+  in one of three designs:
+  - **cove**: a perimeter band with hidden LED washing the ceiling and
+    downlights in the band;
+  - **island**: a floating gypsum raft with a wide margin, LED glowing along
+    its edges and washing the ceiling around it, and downlights in it;
+  - **slats**: the cove band with wooden battens on a dark backing across the
+    central recess.
+
+  It also has `buildDaylight` (sky panels, sun and fill, by mood). Groups
+  are named so a shot can hide them: `wall:<side>`, `door:<id>`, `ceiling`,
+  `curtains`, `exterior`.
 - `scene.ts`: `buildRoomScene(T, room, {clay, lights})` is the ONE scene
   builder, used by the viewport, the shots and the Blender export. It passes
   the room's mood to the materials and the kit.
@@ -188,8 +198,11 @@ walls.
 - `geometry.ts`: footprints, `wallBehind`, `mainDoor`, `mainItem`,
   `itemsAgainst`, `formatSize` (m + ft), plus the vertical helpers:
   - `onFloor(type)` is false for rugs and for wall- or ceiling-hung pieces.
-  - `ceilingAt(room, x, z)` gives the false ceiling band or the true ceiling
-    (`falseCeilingBand` is shared with `shell.ts`).
+  - `ceilingAt(room, x, z)` gives the ceiling surface over a point for each
+    design: the cove band (`falseCeilingBand`, shared with `shell.ts`), the
+    floating island (`islandRect`, `ISLAND_DROP`), the slats (`SLAT_DROP`)
+    or the true ceiling. `wallCeiling` is the height along the walls, which
+    wardrobes, wall panels and the scene's `ceilingClear` use.
   - `ceilingDrop` shortens a fan's drop so its blades stay above
     `FAN_CLEAR` (2.3 m).
   - `verticalSpan(room, it)` gives a piece's bottom and top.
@@ -223,6 +236,10 @@ walls.
   `room` / `shot`) → `applyOps`, which validates, places and never throws.
   A mood word ("evening light", "make it night") becomes a `room` op with
   `mood`, plus a shot if one is named; "night stand" stays furniture.
+  "change ceiling design" cycles the false ceiling designs (`ceilingDesign:
+  "next"`); "wooden slat ceiling", "floating ceiling" or "cove ceiling" pick
+  one; "plain ceiling" removes the false ceiling; "ceiling fan" stays
+  furniture. `CEILING_WORDS` names each design.
   `runCommand` = parse + apply. `sanitizeOps` validates AI-proposed ops.
   Room sizes read metres, mm, feet and feet-inches ("room size 11'8\" x
   20'").
@@ -317,8 +334,8 @@ walls.
     `[ymin,xmin,ymax,xmax]` 0-1000 boxes, bed `head`, and `front`. Opening
     kinds are `door | window | sliding_door | opening`. It says never compute
     or guess numbers and never invent furniture.
-  - `COMMAND_SYSTEM` + `commandUser` describe the Op schema, the catalog and
-    the room JSON.
+  - `COMMAND_SYSTEM` + `commandUser` describe the Op schema (including
+    `ceilingDesign` and `mood`), the catalog and the room JSON.
   - `realisticPrompt` keeps the LAYOUT exactly (camera, room, which pieces,
     where, how big, which design and colour) and has every SURFACE and all the
     LIGHT re-rendered as a real photograph. An earlier version said "keep the
@@ -336,7 +353,7 @@ walls.
     - It names only the pieces in frame (`itemsInView`). Naming an
       out-of-frame piece made Nano Banana paint it in: a real plan's entry
       shot gained the wardrobe that stands behind the camera.
-    - It says plain wall stays plain.
+    - It says plain wall stays plain, and describes the ceiling per design.
     - Its `Light:` sentence is the mood's (daylight, golden-hour evening, or
       night lit only by the room's own lamps).
     - It names the floor's tone ("light honey-coloured oak", from the style's
@@ -351,6 +368,13 @@ walls.
   plus the chat endpoint. Models: `gemini-3-pro` reader, `gemini-3-flash` chat
   and `nano-banana-pro` render, overridable with `KIE_READER_MODEL`,
   `KIE_CHAT_MODEL`, `KIE_RENDER_MODEL` and `KIE_RENDER_RESOLUTION`.
+  `kieChat` sends both messages in the parts form kie.ai documents (a plain
+  string content can come back empty), with `include_thoughts: false` and
+  `reasoning_effort` low (high for plan reading). kie.ai reports most
+  failures as HTTP 200 `{code, msg}` without `choices` (455 "No available
+  channels", 524 "retry fail", 401, 402); these are read and shown in plain
+  words, content may be a string or a list of parts, and an empty or failed
+  answer is retried once.
   `kiePoll.ts` sets a 5-minute window and tolerates transient
   "generate task timeout" fails for 120 s.
 - `run.ts`: `providerFor(key)`, `runReadPlan` (one retry on bad JSON, falls

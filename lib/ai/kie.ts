@@ -89,26 +89,78 @@ async function pollTask(taskId: string, key: string): Promise<string> {
 
 type ChatContent = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
 
-/** One system + user turn on a kie.ai chat model; returns the text answer. */
-export async function kieChat(key: string, model: string, system: string, text: string, imageUrls: string[] = []): Promise<string> {
+type ChatReply = {
+  /** kie.ai reports most failures as HTTP 200 with { code, msg } and no choices. */
+  code?: number;
+  msg?: string;
+  choices?: { message?: { content?: string | { type?: string; text?: string; thought?: boolean }[] }; finish_reason?: string }[];
+};
+
+/** kie.ai error codes in plain words (the envelope's code, or the HTTP status). */
+function chatError(code: number, msg: string): string {
+  if (code === 455 || /no available channel/i.test(msg)) return "kie.ai has no free capacity for this model right now — try again in a minute.";
+  if (code === 524 || /retry fail|timeout/i.test(msg)) return "kie.ai timed out talking to the model — try again.";
+  return friendly(code, msg ? `kie.ai: ${msg}` : `kie.ai chat failed (code ${code}).`);
+}
+
+/** The answer text, whether content is a string or a list of parts (thought parts skipped). */
+function replyText(json: ChatReply | null): string {
+  const c = json?.choices?.[0]?.message?.content;
+  if (typeof c === "string") return c.trim();
+  if (Array.isArray(c)) return c.filter((p) => !p.thought && typeof p.text === "string").map((p) => p.text).join("").trim();
+  return "";
+}
+
+/**
+ * One system + user turn on a kie.ai chat model; returns the text answer.
+ * Messages use the parts form kie.ai documents (a plain string content can
+ * come back empty), thoughts are not returned, and an empty or failed answer
+ * is retried once before its real reason is shown.
+ */
+export async function kieChat(
+  key: string,
+  model: string,
+  system: string,
+  text: string,
+  imageUrls: string[] = [],
+  opts: { effort?: "low" | "high" } = {},
+): Promise<string> {
   const content: ChatContent[] = [...imageUrls.map((url) => ({ type: "image_url" as const, image_url: { url } })), { type: "text", text }];
-  const res = await fetch(`https://api.kie.ai/${model}/v1/chat/completions`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model,
-      stream: false,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content },
-      ],
-    }),
+  const body = JSON.stringify({
+    stream: false,
+    include_thoughts: false,
+    reasoning_effort: opts.effort ?? "low",
+    messages: [
+      { role: "system", content: [{ type: "text", text: system }] },
+      { role: "user", content },
+    ],
   });
-  if (!res.ok) throw new Error(friendly(res.status, `kie.ai chat failed (HTTP ${res.status}).`));
-  const json = (await res.json().catch(() => null)) as { choices?: { message?: { content?: string } }[] } | null;
-  const out = json?.choices?.[0]?.message?.content?.trim() ?? "";
-  if (!out) throw new Error("kie.ai returned an empty answer.");
-  return out;
+  let problem = "kie.ai returned an empty answer.";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt) await sleep(1500);
+    const res = await fetch(`https://api.kie.ai/${model}/v1/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body,
+    });
+    if (!res.ok) {
+      // A bad key or an empty balance will not fix itself; anything else gets one more try.
+      problem = chatError(res.status, "");
+      if (res.status === 401 || res.status === 402) break;
+      continue;
+    }
+    const json = (await res.json().catch(() => null)) as ChatReply | null;
+    if (typeof json?.code === "number" && json.code !== 200 && !json.choices) {
+      problem = chatError(json.code, json.msg ?? "");
+      if (json.code === 401 || json.code === 402) break;
+      continue;
+    }
+    const out = replyText(json);
+    if (out) return out;
+    const finish = json?.choices?.[0]?.finish_reason;
+    problem = `kie.ai returned an empty answer${finish ? ` (${finish})` : ""} — try again, or rephrase the request.`;
+  }
+  throw new Error(problem);
 }
 
 /** Nano Banana Pro on kie.ai: input images + instruction → hosted image URL. */

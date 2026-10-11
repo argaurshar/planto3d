@@ -4,12 +4,13 @@
 //   3. optionally re-light a raw shot of the exact model into a photograph.
 // It never decides where anything is: the 3D model does.
 
-import type { Item, RoomModel, Shot } from "../room/types";
+import type { CeilingDesign, Item, RoomModel, Shot } from "../room/types";
 import { CATALOG, ITEM_TYPES, itemLabel } from "../room/catalog";
 import { STYLES, STYLE_IDS, COLOR_WORDS } from "../room/styles";
 import { describeItem } from "../room/commands";
 import { itemsInView } from "../room/shots";
 import { moodSpec } from "../room/moods";
+import { ceilingDesignOf } from "../room/geometry";
 
 export const PLAN_READER_SYSTEM = `You are an architect reading a 2D architectural floor plan image, measuring it precisely for a true-scale 3D model.
 The image shows ONE room to be modelled (if it shows several rooms, read the single largest room, or the room named in the user's hint).
@@ -53,7 +54,7 @@ Operations:
 {"op":"add","type":TYPE,"variant":DESIGN,"finish":"walnut","wall":"left","near":"ITEM_ID","count":1}   — omit x/z to let the app place it properly (preferred), or give "x","z","w","d","h","facing".
 {"op":"remove","ids":["ITEM_ID"]}
 {"op":"update","ids":["ITEM_ID"],"variant":DESIGN,"nextVariant":true,"finish":"emerald velvet" or null,"dx":0.3,"dz":0,"x":1.2,"z":2.0,"w":1.8,"d":2.1,"h":1.2,"facing":"down","rotate":90,"wall":"right"}
-{"op":"room","wallColor":"#rrggbb","floor":"wood|tile|marble|carpet","falseCeiling":true,"curtains":true,"height":3.0,"style":STYLE,"mood":"day|evening|night"}
+{"op":"room","wallColor":"#rrggbb","floor":"wood|tile|marble|carpet","falseCeiling":true,"ceilingDesign":"cove|island|slats|next","curtains":true,"height":3.0,"style":STYLE,"mood":"day|evening|night"}
 {"op":"shot","shot":"entry|back|front|corner|top|next"}
 
 Only use the fields you need. Use existing item ids from the room. Keep everything inside the room. Never remove or move things the user did not mention.
@@ -72,6 +73,7 @@ export function commandUser(room: RoomModel, text: string, selectedId: string | 
     floor: room.floor,
     wallColor: room.wallColor,
     falseCeiling: room.falseCeiling,
+    ceilingDesign: room.falseCeiling ? room.ceilingDesign ?? "cove" : undefined,
     curtains: room.curtains,
     mood: room.mood ?? "day",
     openings: room.openings.map((o) => ({ id: o.id, kind: o.kind, wall: o.wall, offset: o.offset, width: o.width, main: o.main || undefined })),
@@ -117,6 +119,14 @@ function floorWords(room: RoomModel): string {
 }
 
 const WOOD_NAMES: Record<string, string> = { oak: "oak", walnut: "walnut", teak: "teak", "white-oak": "white oak", ash: "ash", wenge: "wenge" };
+
+/** The ceiling as a photographer would see it, per false ceiling design. */
+const CEILING_PHOTO: Record<CeilingDesign | "none", string> = {
+  none: "a plain painted ceiling with its light fitting.",
+  cove: "a gypsum false ceiling band around the room with a soft warm cove-light glow on the ceiling above it and recessed downlights in the band.",
+  island: "a floating gypsum ceiling island with a soft warm LED glow washing the ceiling around its edges and recessed downlights in it.",
+  slats: "a gypsum false ceiling band with cove light, and real wooden slats with thin dark shadow gaps across the central recess.",
+};
 
 /** What makes each floor read as real in a photograph. */
 const FLOOR_DETAIL: Record<RoomModel["floor"], string> = {
@@ -218,6 +228,7 @@ export function realisticPrompt(room: RoomModel, shot: Shot | null, extra = ""):
     "MAKE IT REAL (nothing may look like 3D any more):",
     `- Floor: ${floorWords(room)} ${FLOOR_DETAIL[room.floor]}, the same tone as the image${hasRug ? "" : ", no rug"}.`,
     `- Walls and ceiling: matte painted plaster in the same colour as the image (${room.wallColor}), with subtle surface texture; the light on them falls off naturally and darkens softly into the corners.`,
+    `- Ceiling: ${CEILING_PHOTO[room.falseCeiling ? ceilingDesignOf(room) : "none"]}`,
     ...(room.curtains ? ["- Curtains: sheer voile with soft vertical folds and real translucency, glowing with the light from outside; heavier linen drapes at the sides."] : []),
     "- Fabric everywhere has visible weave, softness and natural creases; wood has grain and a satin sheen; edges are crisp but very slightly rounded, never razor-sharp; metal is brushed; glass and the TV screen show faint real reflections; lamp shades glow softly.",
     `- Light: ${moodSpec(room).words} Physically based global illumination: light bounces off the floor and walls with gentle colour bleed, soft contact shadows under and behind every piece, ambient occlusion where surfaces meet, natural falloff from every light.`,

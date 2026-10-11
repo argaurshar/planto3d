@@ -22,9 +22,10 @@ import {
   round2,
   verticalSpan,
   wallBehind,
+  wallCeiling,
   wallOfDir,
 } from "./geometry";
-import { FALSE_CEILING_DROP, WALL_CLEAR } from "./constants";
+import { WALL_CLEAR } from "./constants";
 
 export { WALL_CLEAR };
 
@@ -209,7 +210,7 @@ function wallsBySpace(room: RoomModel): Wall[] {
 }
 
 function ceilingClear(room: RoomModel): number {
-  return room.falseCeiling ? room.height - FALSE_CEILING_DROP : room.height;
+  return wallCeiling(room);
 }
 
 /** Default size of a new piece, adjusted to what it goes with. */

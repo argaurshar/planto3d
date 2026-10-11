@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { FloorFinish, Opening, OpeningKind, RoomKind, RoomModel, StyleId, Wall } from "@/lib/room/types";
+import type { CeilingDesign, FloorFinish, Opening, OpeningKind, RoomKind, RoomModel, StyleId, Wall } from "@/lib/room/types";
 import { ROOM_KINDS } from "@/lib/room/catalog";
 import { STYLES, STYLE_IDS } from "@/lib/room/styles";
-import { formatSize, round2 } from "@/lib/room/geometry";
+import { CEILING_DESIGNS, ceilingDesignOf, formatSize, round2 } from "@/lib/room/geometry";
+import { CEILING_WORDS } from "@/lib/room/commands";
 
 interface Props {
   room: RoomModel;
@@ -127,13 +128,25 @@ export default function RoomPanel({ room, onChange }: Props) {
         </label>
         <div className="flex flex-col justify-end gap-1.5 text-xs text-neutral-300">
           <label className="flex items-center gap-2">
-            <input type="checkbox" checked={room.falseCeiling} onChange={(e) => set({ falseCeiling: e.target.checked })} /> False ceiling + cove light
+            <input type="checkbox" checked={room.falseCeiling} onChange={(e) => set({ falseCeiling: e.target.checked })} /> False ceiling
           </label>
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={room.curtains} onChange={(e) => set({ curtains: e.target.checked })} /> Curtains
           </label>
         </div>
       </div>
+      {room.falseCeiling && (
+        <label className="block">
+          <span className="eyebrow mb-1 block">Ceiling design</span>
+          <select value={ceilingDesignOf(room)} onChange={(e) => set({ ceilingDesign: e.target.value as CeilingDesign })} className="input px-2 py-1.5 text-sm">
+            {CEILING_DESIGNS.map((d) => (
+              <option key={d} value={d}>
+                {CEILING_WORDS[d].charAt(0).toUpperCase() + CEILING_WORDS[d].slice(1)}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
 
       <div>
         <div className="mb-1.5 flex items-center justify-between">

@@ -14,7 +14,7 @@ type Group = import("three").Group;
 type Object3D = import("three").Object3D;
 
 import { FALSE_CEILING_DROP, SKIRT_H, WALL_T } from "./constants";
-import { falseCeilingBand } from "./geometry";
+import { ISLAND_DROP, SLAT_DROP, ceilingDesignOf, falseCeilingBand, islandRect } from "./geometry";
 import { moodSpec } from "./moods";
 export { FALSE_CEILING_DROP, SKIRT_H, WALL_T };
 
@@ -267,6 +267,8 @@ function buildCeiling(c: BuildCtx, g: Group): void {
     g.add(l);
     return;
   }
+  const design = ceilingDesignOf(room);
+  if (design === "island") return islandCeiling(c, g);
   const drop = FALSE_CEILING_DROP;
   const band = falseCeilingBand(room);
   const y = H - drop;
@@ -327,6 +329,98 @@ function buildCeiling(c: BuildCtx, g: Group): void {
       g.add(s.target);
     }
   });
+  if (design === "slats") slatCeiling(c, g, band);
+}
+
+/** Downlights over a rectangle, about 1.2 m apart; every other one is a real spot light. */
+function downlights(c: BuildCtx, g: Group, x0: number, x1: number, z0: number, z1: number, y: number): void {
+  const { k, m } = c;
+  const THREE = k.THREE;
+  const along = (a: number, b: number) => {
+    const n = Math.max(1, Math.round((b - a) / 1.2));
+    return Array.from({ length: n }, (_, i) => a + ((b - a) * (i + 0.5)) / n);
+  };
+  const disc = m.emissive("#fff6e8", 4);
+  let i = 0;
+  for (const x of along(x0, x1))
+    for (const z of along(z0, z1)) {
+      k.cyl(g, 0.045, 0.045, 0.01, disc, x, y - 0.002, z, 20, { cast: false });
+      if (i++ % 2 === 0) {
+        const s = new THREE.SpotLight("#ffe4bf", 9 * k.lampScale, 6, 0.75, 0.85, 2);
+        s.position.set(x, y - 0.02, z);
+        s.target.position.set(x, 0, z);
+        g.add(s);
+        g.add(s.target);
+      }
+    }
+}
+
+/**
+ * A floating ceiling island: a gypsum raft hung below the true ceiling with
+ * hidden LED along its top edges washing the ceiling around it, and
+ * downlights in its underside. The perimeter stays at full height.
+ */
+function islandCeiling(c: BuildCtx, g: Group): void {
+  const { k, m, room } = c;
+  const THREE = k.THREE;
+  const H = room.height;
+  const r = islandRect(room);
+  const w = r.x1 - r.x0;
+  const d = r.z1 - r.z0;
+  const cx = (r.x0 + r.x1) / 2;
+  const cz = (r.z0 + r.z1) / 2;
+  const y = H - ISLAND_DROP;
+  const t = 0.08;
+  k.slab(g, w, t, d, m.wallPaint("#f7f6f3"), cx, y, cz, { cast: false });
+  const led = m.emissive("#ffd8a0", 3);
+  // [x, z, width, depth, outward x, outward z] for each edge.
+  const edges: [number, number, number, number, number, number][] = [
+    [cx, r.z0 + 0.03, w - 0.06, 0.02, 0, -1],
+    [cx, r.z1 - 0.03, w - 0.06, 0.02, 0, 1],
+    [r.x0 + 0.03, cz, 0.02, d - 0.06, -1, 0],
+    [r.x1 - 0.03, cz, 0.02, d - 0.06, 1, 0],
+  ];
+  for (const [x, z, sw, sd, ox, oz] of edges) {
+    k.slab(g, sw, 0.01, sd, led, x, y + t, z, { cast: false });
+    // A glowing line along the raft's outer edge, the floating look seen from below.
+    const ex = x + ox * 0.034;
+    const ez = z + oz * 0.034;
+    k.slab(g, ox ? 0.006 : w, 0.014, ox ? d : 0.006, led, ex, y + t - 0.022, ez, { cast: false });
+    // The glow washes the ceiling just outside the island, where it is seen from the room.
+    const lx = x + ox * 0.12;
+    const lz = z + oz * 0.12;
+    const l = new THREE.RectAreaLight("#ffd29a", 4 * k.lampScale, Math.max(sw, 0.06), Math.max(sd, 0.06));
+    l.position.set(lx, y + t + 0.02, lz);
+    l.lookAt(lx + ox * 0.6, H, lz + oz * 0.6);
+    g.add(l);
+  }
+  downlights(c, g, r.x0 + 0.35, r.x1 - 0.35, r.z0 + 0.35, r.z1 - 0.35, y);
+}
+
+/** Wooden battens across the recess inside the cove band, on a dark backing so the gaps read as shadow lines. */
+function slatCeiling(c: BuildCtx, g: Group, band: number): void {
+  const { k, m, room, p } = c;
+  const H = room.height;
+  const x0 = band + 0.05;
+  const x1 = room.width - band - 0.05;
+  const z0 = band + 0.05;
+  const z1 = room.depth - band - 0.05;
+  if (x1 - x0 < 0.3 || z1 - z0 < 0.3) return;
+  k.slab(g, x1 - x0, 0.01, z1 - z0, m.lacquer("#2b2724", true), (x0 + x1) / 2, H - 0.012, (z0 + z1) / 2, { cast: false });
+  // Battens run along the room's longer side.
+  const alongZ = room.depth >= room.width;
+  const span = alongZ ? x1 - x0 : z1 - z0;
+  const len = alongZ ? z1 - z0 : x1 - x0;
+  const pitch = 0.1;
+  const n = Math.max(1, Math.floor(span / pitch));
+  const start = (alongZ ? x0 : z0) + (span - (n - 1) * pitch) / 2;
+  const wood = m.wood(p.wood);
+  const h = SLAT_DROP - 0.012;
+  for (let i = 0; i < n; i++) {
+    const a = start + i * pitch;
+    if (alongZ) k.slab(g, 0.035, h, len, wood, a, H - SLAT_DROP, (z0 + z1) / 2, { grain: 2, cast: false });
+    else k.slab(g, len, h, 0.035, wood, (x0 + x1) / 2, H - SLAT_DROP, a, { grain: 0, cast: false });
+  }
 }
 
 /**

@@ -1,7 +1,7 @@
 // Plan geometry over a RoomModel: footprints, which wall a piece backs onto,
 // the main door, the room's main piece. Pure functions, no three.js.
 
-import type { Dir, Item, ItemType, Opening, RoomModel, Wall } from "./types";
+import type { CeilingDesign, Dir, Item, ItemType, Opening, RoomModel, Wall } from "./types";
 import { CATALOG, MAIN_ITEM_ORDER } from "./catalog";
 import { FALSE_CEILING_DROP } from "./constants";
 
@@ -125,11 +125,40 @@ export function falseCeilingBand(room: Pick<RoomModel, "width" | "depth">): numb
   return Math.min(0.65, Math.min(room.width, room.depth) * 0.18);
 }
 
-/** Height of the ceiling surface over a plan point (the false ceiling band, or the true ceiling). */
+export const CEILING_DESIGNS: CeilingDesign[] = ["cove", "island", "slats"];
+
+export function ceilingDesignOf(room: Pick<RoomModel, "ceilingDesign">): CeilingDesign {
+  return room.ceilingDesign && CEILING_DESIGNS.includes(room.ceilingDesign) ? room.ceilingDesign : "cove";
+}
+
+/** How far a floating ceiling island hangs below the true ceiling (its underside). */
+export const ISLAND_DROP = 0.22;
+/** Underside of a wooden slat ceiling below the true ceiling. */
+export const SLAT_DROP = 0.07;
+
+/** The floating island of an "island" false ceiling, inset from the walls. */
+export function islandRect(room: Pick<RoomModel, "width" | "depth">): Rect {
+  // A wide margin, so the lit ceiling around the raft shows from the room.
+  const inset = clamp(Math.min(room.width, room.depth) * 0.24, 0.6, 1.2);
+  return { x0: inset, x1: room.width - inset, z0: inset, z1: room.depth - inset };
+}
+
+/** Height of the ceiling surface over a plan point (band, island, slats or the true ceiling). */
 export function ceilingAt(room: RoomModel, x: number, z: number): number {
   if (!room.falseCeiling) return room.height;
+  const design = ceilingDesignOf(room);
+  if (design === "island") {
+    const r = islandRect(room);
+    return x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1 ? room.height - ISLAND_DROP : room.height;
+  }
   const b = falseCeilingBand(room);
-  return x < b || z < b || x > room.width - b || z > room.depth - b ? room.height - FALSE_CEILING_DROP : room.height;
+  if (x < b || z < b || x > room.width - b || z > room.depth - b) return room.height - FALSE_CEILING_DROP;
+  return design === "slats" ? room.height - SLAT_DROP : room.height;
+}
+
+/** Ceiling height along the walls, where wardrobes, wall panels and an AC meet it. */
+export function wallCeiling(room: RoomModel): number {
+  return room.falseCeiling && ceilingDesignOf(room) !== "island" ? room.height - FALSE_CEILING_DROP : room.height;
 }
 
 /** Lowest clear height under a ceiling fan's blades (2.1 m is the legal minimum; 2.3 m feels right). */
